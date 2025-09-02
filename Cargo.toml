@@ -4,3 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+
+# alloy
+alloy-primitives = { version = "1.2.0", default-features = false, features = [
+    "map-foldhash",
+] }
+alloy-eips = { version = "1.0.23", default-features = false }
+alloy-rpc-types-engine = { version = "1.0.23" }
+alloy-consensus = { version = "1.0.23" }
+alloy-serde = "1.0.23"
+
+
+# misc
+clap = { version = "4.4.3" }
+tracing = { version = "0.1.41" }
+serde = "1"
+serde_json = "1.0"
+
+
+[[bin]]
+name = "ethgas-reth"
+path = "src/bin/main.rs"
+
+[lib]
+path = "src/lib.rs"

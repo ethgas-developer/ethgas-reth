@@ -1,5 +1,5 @@
 use crate::payload::FlashBlock;
-use alloy_consensus::{Header};
+use alloy_consensus::Header;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, BlockNumber, Sealed, TxHash, U256, map::foldhash::HashMap};
 use alloy_provider::network::{TransactionResponse, primitives::BlockTransactions};
@@ -52,8 +52,7 @@ impl PendingBlockBuilder {
 
     #[inline]
     pub(crate) fn with_transaction(&mut self, transaction: Transaction) -> &Self {
-        self.transactions_by_hash
-            .insert(transaction.tx_hash(), transaction.clone());
+        self.transactions_by_hash.insert(transaction.tx_hash(), transaction.clone());
         self.transactions.push(transaction);
         self
     }
@@ -153,8 +152,7 @@ impl PendingBlock {
         let transactions = if full {
             BlockTransactions::Full(self.transactions.clone())
         } else {
-            let tx_hashes =
-                self.transactions.iter().map(|tx| tx.tx_hash()).collect();
+            let tx_hashes = self.transactions.iter().map(|tx| tx.tx_hash()).collect();
             BlockTransactions::Hashes(tx_hashes)
         };
 

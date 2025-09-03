@@ -5,7 +5,7 @@ use crate::{
     service::FlashblocksReceiver,
 };
 use alloy_consensus::{
-    Header, TxEnvelope, TxReceipt,
+    Header, ReceiptEnvelope, TxEnvelope, TxReceipt,
     transaction::{Recovered, SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::BlockNumberOrTag;
@@ -14,7 +14,7 @@ use alloy_primitives::{
     Address, B256, Sealable, TxHash, U256,
     map::{B256HashMap, foldhash::HashMap},
 };
-use alloy_rpc_types::{Transaction, TransactionTrait};
+use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
 use arc_swap::ArcSwapOption;
@@ -26,11 +26,12 @@ use reth::{
         DatabaseCommit, State, context::result::ResultAndState, database::StateProviderDatabase,
         db::CacheDB,
     },
+    rpc::server_types::eth::receipt::build_receipt,
 };
 use reth_ethereum_primitives::Block;
-use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes, noop::NoopEvmConfig};
+use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes};
 use reth_evm_ethereum::EthEvmConfig;
-use reth_primitives::{EthPrimitives, EthereumHardforks, NodePrimitives};
+use reth_primitives::{EthPrimitives, EthereumHardforks};
 use reth_primitives_traits::RecoveredBlock;
 use reth_rpc_convert::{RpcTransaction, transaction::ConvertReceiptInput};
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
@@ -68,7 +69,9 @@ where
         if let Some(cur) = self.pending_block.load_full() {
             if cur.block_number() <= block.number {
                 // clear the pending flashblockblock
-                if let Some(prev) = self.pending_block.swap(None) {}
+                if let Some(prev) = self.pending_block.swap(None) {
+                    // todo add metrics
+                }
             }
         }
     }
@@ -229,36 +232,23 @@ where
                 last_fb_recovered_txs.push(recovered_transaction);
             }
 
-            // Build Transaction
-            // let (deposit_receipt_version, deposit_nonce) = 
-            // // if transaction.is_deposit() {
-            // //     let deposit_receipt = receipt
-            // //         .as_deposit_receipt()
-            // //         .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
+            let effective_gas_price = block
+                .base_fee_per_gas
+                .map(|base_fee| {
+                    transaction.effective_tip_per_gas(base_fee).unwrap_or_default() +
+                        base_fee as u128
+                })
+                .unwrap_or_else(|| transaction.max_fee_per_gas());
 
-            // //     (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
-            // // } else 
-            // {
-            //     (None, None)
-            // };
-
-            let effective_gas_price = 
-            // if transaction.is_deposit() {
-                // 0
-            // } else 
-            {
-                block
-                    .base_fee_per_gas
-                    .map(|base_fee| {
-                        transaction.effective_tip_per_gas(base_fee).unwrap_or_default() +
-                            base_fee as u128
-                    })
-                    .unwrap_or_else(|| transaction.max_fee_per_gas())
+            let rpc_txn = alloy_rpc_types_eth::Transaction {
+                inner: envelope,
+                block_hash: Some(header.hash()),
+                block_number: Some(base.block_number),
+                transaction_index: Some(idx as u64),
+                effective_gas_price: Some(effective_gas_price),
             };
 
-            // let rpc_txn = Transaction::default();
-
-            // pending_block_builder.with_transaction(rpc_txn);
+            pending_block_builder.with_transaction(rpc_txn);
             // End Transaction
 
             // Receipt Generation
@@ -272,22 +262,21 @@ where
                 timestamp: block.timestamp,
             };
 
-            // let input: ConvertReceiptInput<'_, EthPrimitives> = ConvertReceiptInput {
-            //     receipt: Cow::Borrowed(&receipt),
-            //     tx: Recovered::new_unchecked(transaction, sender),
-            //     gas_used: receipt.cumulative_gas_used() - gas_used,
-            //     next_log_index,
-            //     meta,
-            // };
+            let input: ConvertReceiptInput<'_, EthPrimitives> = ConvertReceiptInput {
+                receipt: Cow::Borrowed(&receipt),
+                tx: Recovered::new_unchecked(transaction, sender),
+                gas_used: receipt.cumulative_gas_used() - gas_used,
+                next_log_index,
+                meta,
+            };
 
-            // let op_receipt = Builder::new(
-            //     self.client.chain_spec().as_ref(),
-            //     input,
-            //     &mut l1_block_info,
-            // )?
-            // .build();
-
-            // pending_block_builder.with_receipt(*transaction.tx_hash(), op_receipt);
+            let tx_type = input.receipt.tx_type;
+            let blob_params =
+                self.client.chain_spec().blob_params_at_timestamp(input.meta.timestamp);
+            let eth_receipt = build_receipt(&input, blob_params, |receipt_with_bloom| {
+                ReceiptEnvelope::from_typed(tx_type, receipt_with_bloom)
+            });
+            pending_block_builder.with_receipt(*transaction.tx_hash(), eth_receipt);
 
             gas_used = receipt.cumulative_gas_used();
             next_log_index += receipt.logs().len();

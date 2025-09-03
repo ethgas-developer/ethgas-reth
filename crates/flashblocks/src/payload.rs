@@ -52,6 +52,8 @@ pub struct Metadata {
 /// block creation and cannot be modified.
 #[derive(Clone, Debug, Eq, PartialEq, Default, Deserialize, Serialize)]
 pub struct ExecutionPayloadBaseV1 {
+    /// Ecotone parent beacon block root
+    pub parent_beacon_block_root: B256,
     /// The parent hash of the block.
     pub parent_hash: B256,
     /// The fee recipient of the block.
@@ -101,4 +103,20 @@ pub struct ExecutionPayloadFlashblockDeltaV1 {
     /// Execess blob gas used
     #[serde(with = "alloy_serde::quantity")]
     pub excess_blob_gas: u64,
+}
+
+/// Internal helper for decoding
+#[derive(Clone, Debug, PartialEq, Default, Deserialize, Serialize)]
+pub struct FlashblocksPayloadV1 {
+    /// The payload id of the flashblock
+    pub payload_id: PayloadId,
+    /// The index of the flashblock in the block
+    pub index: u64,
+    /// The base execution payload configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<ExecutionPayloadBaseV1>,
+    /// The delta/diff containing modified portions of the execution payload
+    pub diff: ExecutionPayloadFlashblockDeltaV1,
+    /// Additional metadata associated with the flashblock
+    pub metadata: serde_json::Value,
 }

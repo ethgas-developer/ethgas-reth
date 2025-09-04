@@ -3121,6 +3121,7 @@ dependencies = [
  "reth-evm",
  "reth-evm-ethereum",
  "reth-exex",
+ "reth-node-ethereum",
  "reth-primitives",
  "reth-primitives-traits",
  "reth-provider",

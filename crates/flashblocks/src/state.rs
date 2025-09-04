@@ -1,3 +1,4 @@
+
 use crate::{
     payload::FlashBlock,
     pending::{PendingBlock, PendingBlockBuilder},
@@ -20,11 +21,10 @@ use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesB
 use arc_swap::ArcSwapOption;
 use eyre::eyre;
 use reth::{
-    chainspec::{ChainSpecProvider, EthChainSpec},
+    chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec},
     providers::{BlockReaderIdExt, StateProviderFactory},
     revm::{
-        DatabaseCommit, State, context::result::ResultAndState, database::StateProviderDatabase,
-        db::CacheDB,
+        context::result::ResultAndState, database::StateProviderDatabase, db::CacheDB, DatabaseCommit, State
     },
     rpc::server_types::eth::receipt::build_receipt,
 };
@@ -47,6 +47,7 @@ pub struct FlashblocksState<Client> {
     pending_block: Arc<ArcSwapOption<PendingBlock>>,
     flashblock_sender: Sender<FlashBlock>,
     client: Client,
+    chain_spec: Arc<ChainSpec>,
 }
 
 impl<Client> FlashblocksState<Client>
@@ -57,11 +58,12 @@ where
         + Clone
         + 'static,
 {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Client, chain_spec: Arc<ChainSpec>) -> Self {
         Self {
             pending_block: Arc::new(ArcSwapOption::new(None)),
             flashblock_sender: broadcast::channel(BUFFER_SIZE).0,
             client,
+            chain_spec,
         }
     }
 
@@ -69,7 +71,7 @@ where
         if let Some(cur) = self.pending_block.load_full() {
             if cur.block_number() <= block.number {
                 // clear the pending flashblockblock
-                if let Some(prev) = self.pending_block.swap(None) {
+                if let Some(_prev) = self.pending_block.swap(None) {
                     // todo add metrics
                 }
             }
@@ -86,7 +88,7 @@ where
     }
 
     fn update_pending_block(&self, flashblocks: Vec<FlashBlock>) {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         match self.process_flashblock(flashblocks) {
             Ok(block) => {
                 self.pending_block.swap(Some(Arc::new(block)));
@@ -205,7 +207,7 @@ where
             previous_block
         ))?;
 
-        let evm_config = EthEvmConfig::mainnet();
+        let evm_config = EthEvmConfig::ethereum(self.chain_spec.clone());
         let evm_env = evm_config.next_evm_env(&previous_header, &block_env_attributes)?;
 
         let mut evm = evm_config.evm_with_env(db, evm_env);
@@ -286,6 +288,7 @@ where
         for tx in last_fb_recovered_txs {
             // EVM Transaction
             let ResultAndState { state, .. } = evm.transact(tx)?;
+
             for (addr, acc) in &state {
                 let state_diff = B256HashMap::<B256>::from_iter(
                     acc.storage.iter().map(|(&key, slot)| (key.into(), slot.present_value.into())),

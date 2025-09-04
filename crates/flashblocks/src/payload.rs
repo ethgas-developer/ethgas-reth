@@ -23,12 +23,12 @@ pub struct FlashBlock {
 
 impl FlashBlock {
     /// Returns the block number of this flashblock.
-    pub const fn block_number(&self) -> u64 {
+    pub const fn _block_number(&self) -> u64 {
         self.metadata.block_number
     }
 
     /// Returns the first parent hash of this flashblock.
-    pub fn parent_hash(&self) -> Option<B256> {
+    pub fn _parent_hash(&self) -> Option<B256> {
         Some(self.base.as_ref()?.parent_hash)
     }
 }

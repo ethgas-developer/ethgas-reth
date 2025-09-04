@@ -344,7 +344,7 @@ mod tests {
         let pending_block =
             provider.get_block_by_number(alloy_eips::BlockNumberOrTag::Pending).await?;
         assert_eq!(pending_block.is_none(), true);
-        
+
         let base_payload = create_first_payload_();
         node.send_payload(base_payload).await?;
 

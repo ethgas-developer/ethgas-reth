@@ -1,0 +1,130 @@
+use ethgas_flashblocks::{
+    rpc::{EthApiExt, EthApiOverrideServer},
+    service::FlashblocksSubscriber,
+    state::FlashblocksState,
+};
+use futures_util::TryStreamExt;
+use once_cell::sync::OnceCell;
+use reth::{
+    chainspec::{ChainSpecBuilder, EthereumChainSpecParser},
+    cli::Cli,
+};
+use reth_exex::ExExEvent;
+use reth_node_ethereum::EthereumNode;
+use std::sync::Arc;
+
+use clap::Parser;
+use reth::{
+    builder::{EngineNodeLauncher, Node, TreeConfig},
+    providers::providers::BlockchainProvider,
+};
+use tracing::info;
+use url::Url;
+
+#[global_allocator]
+static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
+
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+struct FlashblocksArgs {
+    #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
+    pub websocket_url: Option<String>,
+}
+
+impl FlashblocksArgs {
+    fn flashblocks_enabled(&self) -> bool {
+        self.websocket_url.is_some()
+    }
+}
+
+fn main() {
+    Cli::<EthereumChainSpecParser, FlashblocksArgs>::parse()
+        .run(|builder, flashblocks_args| async move {
+            info!(message = "starting custom Base node");
+
+            let flashblocks_enabled = flashblocks_args.flashblocks_enabled();
+            let node = EthereumNode::default();
+
+            let chain_spec = Arc::new(ChainSpecBuilder::mainnet().prague_activated().build());
+
+            let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
+
+            let handle = builder
+                .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
+                .with_components(node.components_builder())
+                .with_add_ons(node.add_ons())
+                .on_component_initialized(move |_ctx| Ok(()))
+                .install_exex_if(flashblocks_enabled, "flashblocks-canon", {
+                    let fb_cell = fb_cell.clone();
+                    let chain_spec = chain_spec.clone();
+                    move |mut ctx| async move {
+                        let fb = fb_cell
+                            .get_or_init(|| {
+                                Arc::new(FlashblocksState::new(ctx.provider().clone(), chain_spec))
+                            })
+                            .clone();
+                        Ok(async move {
+                            while let Some(note) = ctx.notifications.try_next().await? {
+                                if let Some(committed) = note.committed_chain() {
+                                    for b in committed.blocks_iter() {
+                                        fb.on_canonical_block_received(b);
+                                    }
+                                    let _ = ctx.events.send(ExExEvent::FinishedHeight(
+                                        committed.tip().num_hash(),
+                                    ));
+                                }
+                            }
+                            Ok(())
+                        })
+                    }
+                })
+                .extend_rpc_modules(move |ctx| {
+                    if flashblocks_enabled {
+                        info!(message = "Starting Flashblocks");
+
+                        let ws_url = Url::parse(
+                            flashblocks_args
+                                .websocket_url
+                                .expect("WEBSOCKET_URL must be set when Flashblocks is enabled")
+                                .as_str(),
+                        )?;
+
+                        let fb = fb_cell
+                            .get_or_init(|| {
+                                Arc::new(FlashblocksState::new(
+                                    ctx.provider().clone(),
+                                    chain_spec.clone(),
+                                ))
+                            })
+                            .clone();
+
+                        let mut flashblocks_client = FlashblocksSubscriber::new(fb.clone(), ws_url);
+                        flashblocks_client.start();
+
+                        let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), fb);
+                        ctx.modules.replace_configured(api_ext.into_rpc())?;
+                    } else {
+                        info!(message = "flashblocks integration is disabled");
+                    }
+                    Ok(())
+                })
+                .launch_with_fn(|builder| {
+                    let engine_tree_config = TreeConfig::default()
+                        .with_persistence_threshold(builder.config().engine.persistence_threshold)
+                        .with_memory_block_buffer_target(
+                            builder.config().engine.memory_block_buffer_target,
+                        );
+
+                    let launcher = EngineNodeLauncher::new(
+                        builder.task_executor().clone(),
+                        builder.config().datadir(),
+                        engine_tree_config,
+                    );
+
+                    builder.launch_with(launcher)
+                })
+                .await?;
+
+            handle.wait_for_node_exit().await
+        })
+        .unwrap();
+}

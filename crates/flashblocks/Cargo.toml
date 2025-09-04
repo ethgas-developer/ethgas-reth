@@ -1,5 +1,5 @@
 [package]
-name = "flashblocks"
+name = "ethgas-flashblocks"
 version.workspace = true
 edition.workspace = true
 

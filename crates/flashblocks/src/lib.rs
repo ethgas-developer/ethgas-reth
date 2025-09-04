@@ -1,9 +1,8 @@
-#![allow(dead_code)]
-mod payload;
-mod pending;
-mod rpc;
-mod service;
-mod state;
+pub mod payload;
+pub mod pending;
+pub mod rpc;
+pub mod service;
+pub mod state;
 
 #[cfg(test)]
 mod tests;

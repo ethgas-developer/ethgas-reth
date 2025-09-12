@@ -3054,6 +3054,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethgas-node"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-trie",
+ "chrono",
+ "clap",
+ "ethgas-flashblocks",
+ "eyre",
+ "futures",
+ "futures-util",
+ "itertools 0.14.0",
+ "jsonrpsee",
+ "metrics",
+ "metrics-derive",
+ "once_cell",
+ "reqwest",
+ "reth",
+ "reth-cli-util",
+ "reth-exex",
+ "reth-node-ethereum",
+ "reth-primitives",
+ "reth-rpc-convert",
+ "reth-rpc-eth-api",
+ "revm",
+ "revm-bytecode",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "eyre"
 version = "0.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5110,51 +5155,6 @@ dependencies = [
  "security-framework 2.11.1",
  "security-framework-sys",
  "tempfile",
-]
-
-[[package]]
-name = "node"
-version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-hardforks",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-trie",
- "chrono",
- "clap",
- "ethgas-flashblocks",
- "eyre",
- "futures",
- "futures-util",
- "itertools 0.14.0",
- "jsonrpsee",
- "metrics",
- "metrics-derive",
- "once_cell",
- "reqwest",
- "reth",
- "reth-cli-util",
- "reth-exex",
- "reth-node-ethereum",
- "reth-primitives",
- "reth-rpc-convert",
- "reth-rpc-eth-api",
- "revm",
- "revm-bytecode",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite",
- "tracing",
- "url",
- "uuid",
 ]
 
 [[package]]

@@ -71,12 +71,13 @@ mod tests {
         pub async fn send_raw_transaction_sync(
             &self,
             tx: Bytes,
+             timeout_ms: Option<u64>,
         ) -> eyre::Result<RpcReceipt<Ethereum>> {
             let url = format!("http://{}", self.http_api_addr);
             let client = RpcClient::new_http(url.parse()?);
 
             let receipt = client
-                .request::<_, RpcReceipt<Ethereum>>("eth_sendRawTransactionSync", (tx,))
+                .request::<_, RpcReceipt<Ethereum>>("eth_sendRawTransactionSync", (tx,timeout_ms))
                 .await?;
 
             Ok(receipt)
@@ -513,7 +514,7 @@ mod tests {
 
         // run the Tx sync and, in parallel, deliver the payload that contains the Tx
         let (receipt_result, payload_result) =
-            tokio::join!(node.send_raw_transaction_sync(raw_tx), async {
+            tokio::join!(node.send_raw_transaction_sync(raw_tx, None), async {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 node.send_payload(create_second_payload()).await
             });

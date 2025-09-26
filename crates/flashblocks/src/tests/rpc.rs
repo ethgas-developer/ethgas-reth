@@ -12,7 +12,9 @@ mod tests {
     use alloy_eips::{BlockNumberOrTag, Encodable2718};
     use alloy_genesis::Genesis;
     use alloy_network::Ethereum;
-    use alloy_primitives::{Address, B256, Bytes, TxHash, U256, address, b256, bytes};
+    use alloy_primitives::{
+        Address, B256, Bytes, TxHash, U256, address, b256, bytes, map::foldhash::HashMap,
+    };
     use alloy_provider::{Provider, RootProvider};
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types::TransactionRequest;
@@ -71,13 +73,13 @@ mod tests {
         pub async fn send_raw_transaction_sync(
             &self,
             tx: Bytes,
-             timeout_ms: Option<u64>,
+            timeout_ms: Option<u64>,
         ) -> eyre::Result<RpcReceipt<Ethereum>> {
             let url = format!("http://{}", self.http_api_addr);
             let client = RpcClient::new_http(url.parse()?);
 
             let receipt = client
-                .request::<_, RpcReceipt<Ethereum>>("eth_sendRawTransactionSync", (tx,timeout_ms))
+                .request::<_, RpcReceipt<Ethereum>>("eth_sendRawTransactionSync", (tx, timeout_ms))
                 .await?;
 
             Ok(receipt)
@@ -177,7 +179,7 @@ mod tests {
             metadata: Metadata {
                 block_number: 1,
                 receipts: {
-                    let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::default();
+                    let mut receipts: HashMap<TxHash, Receipt> = HashMap::default();
                     receipts.insert(
                         tx_hash,
                         Receipt {
@@ -189,7 +191,7 @@ mod tests {
                     );
                     receipts
                 },
-                new_account_balances: BTreeMap::default(),
+                new_account_balances: HashMap::default(),
             },
         }
     }
@@ -216,7 +218,7 @@ mod tests {
             metadata: Metadata {
                 block_number: 1,
                 receipts: {
-                    let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::default();
+                    let mut receipts: HashMap<TxHash, Receipt> = HashMap::default();
                     receipts.insert(
                         TRANSFER_ETH_HASH,
                         Receipt {
@@ -228,7 +230,7 @@ mod tests {
                     );
                     receipts
                 },
-                new_account_balances: BTreeMap::default(),
+                new_account_balances: HashMap::default(),
             },
         }
     }
@@ -295,7 +297,7 @@ mod tests {
             metadata: Metadata {
                 block_number: 1,
                 receipts: {
-                    let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::default();
+                    let mut receipts: HashMap<TxHash, Receipt> = HashMap::default();
 
                     receipts.insert(
                         DEPLOYMENT_HASH,
@@ -318,7 +320,7 @@ mod tests {
                     receipts
                 },
                 new_account_balances: {
-                    let mut map = BTreeMap::default();
+                    let mut map = HashMap::default();
                     map.insert(TEST_ADDRESS, U256::from(PENDING_BALANCE));
                     map.insert(COUNTER_ADDRESS, U256::from(0));
                     map

@@ -2,3 +2,4 @@
 #![allow(dead_code)]
 pub mod rpc;
 pub mod state;
+pub mod utils;

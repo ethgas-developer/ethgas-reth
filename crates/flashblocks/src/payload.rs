@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use alloy_eips::eip4895::Withdrawal;
-use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
+use alloy_primitives::{map::foldhash::HashMap, Address, Bloom, Bytes, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use reth_primitives::Receipt;
 use serde::{Deserialize, Serialize};
@@ -40,10 +40,10 @@ pub struct Metadata {
     pub block_number: u64,
     /// A map of addresses to their updated balances after the block execution.
     /// This represents balance changes due to transactions, rewards, or system transfers.
-    pub new_account_balances: BTreeMap<Address, U256>,
+    pub new_account_balances: HashMap<Address, U256>,
     /// Execution receipts for all transactions in the block.
     /// Contains logs, gas usage, and other EVM-level metadata.
-    pub receipts: BTreeMap<B256, Receipt>,
+    pub receipts: HashMap<B256, Receipt>,
 }
 
 /// Represents the base configuration of an execution payload that remains constant

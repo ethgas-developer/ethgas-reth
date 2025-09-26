@@ -1,20 +1,19 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::payload::FlashBlock;
+use crate::{metrics::Metrics, payload::FlashBlock};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{
+    simulate::{SimBlock, SimulatePayload, SimulatedBlock}, state::{EvmOverrides, StateOverridesBuilder}, BlockOverrides, TransactionRequest
+};
 use alloy_rpc_types_eth::state::StateOverride;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use jsonrpsee_types::{error::INVALID_PARAMS_CODE, ErrorObjectOwned};
-use reth::{
-    providers::CanonStateSubscriptions,
-    rpc::server_types::eth::EthApiError,
-};
+use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
+use reth::{providers::CanonStateSubscriptions, rpc::server_types::eth::EthApiError};
 use reth_rpc_eth_api::{
     RpcBlock, RpcReceipt, RpcTransaction,
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
@@ -97,18 +96,36 @@ pub trait EthApiOverride {
         &self,
         transaction: TransactionRequest,
         block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<alloy_primitives::Bytes>;
+
+    #[method(name = "estimateGas")]
+    async fn estimate_gas(
+        &self,
+        transaction: TransactionRequest,
+        block_number: Option<BlockId>,
+        overrides: Option<StateOverride>,
+    ) -> RpcResult<U256>;
+
+    #[method(name = "simulateV1")]
+    async fn simulate_v1(
+        &self,
+        opts: SimulatePayload<TransactionRequest>,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Ethereum>>>>;
 }
 
 #[derive(Debug)]
 pub struct EthApiExt<Eth, FB> {
     eth_api: Eth,
     flashblocks_state: Arc<FB>,
+    metrics: Metrics,
 }
 
 impl<Eth, FB> EthApiExt<Eth, FB> {
     pub fn new(eth_api: Eth, flashblocks_state: Arc<FB>) -> Self {
-        Self { eth_api, flashblocks_state }
+        Self { eth_api, flashblocks_state, metrics: Metrics::default() }
     }
 }
 
@@ -130,6 +147,7 @@ where
         );
 
         if number.is_pending() {
+            self.metrics.get_block_by_number.increment(1);
             Ok(self.flashblocks_state.get_block(full))
         } else {
             EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
@@ -146,6 +164,7 @@ where
         );
 
         if let Some(fb_receipt) = self.flashblocks_state.get_transaction_receipt(tx_hash) {
+            self.metrics.get_transaction_receipt.increment(1);
             return Ok(Some(fb_receipt));
         }
 
@@ -163,6 +182,7 @@ where
         );
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
+            self.metrics.get_balance.increment(1);
             if let Some(balance) = self.flashblocks_state.get_balance(address) {
                 return Ok(balance);
             }
@@ -183,6 +203,7 @@ where
 
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
+            self.metrics.get_transaction_count.increment(1);
             let latest_count = EthState::transaction_count(
                 &self.eth_api,
                 address,
@@ -208,6 +229,7 @@ where
         );
 
         if let Some(fb_transaction) = self.flashblocks_state.get_transaction_by_hash(tx_hash) {
+            self.metrics.get_transaction_receipt.increment(1);
             return Ok(Some(fb_transaction));
         }
 
@@ -282,16 +304,109 @@ where
         &self,
         transaction: TransactionRequest,
         block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<alloy_primitives::Bytes> {
+        debug!(
+            message = "rpc::call",
+            transaction = ?transaction,
+            block_number = ?block_number,
+            state_overrides = ?state_overrides,
+            block_overrides = ?block_overrides,
+        );
+
         let block_id = block_number.unwrap_or_default();
-        let mut overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
+        let mut pending_overrides = EvmOverrides::default();
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
-            overrides.state = self.flashblocks_state.get_state_overrides()
+            self.metrics.call.increment(1);
+            pending_overrides.state = self.flashblocks_state.get_state_overrides();
         }
 
+        // Apply user's overrides on top
+        let mut state_overrides_builder =
+            StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
+        state_overrides_builder =
+            state_overrides_builder.extend(state_overrides.unwrap_or_default());
+        let final_overrides = state_overrides_builder.build();
+
         // Delegate to the underlying eth_api
-        EthCall::call(&self.eth_api, transaction, block_number, overrides).await.map_err(Into::into)
+        EthCall::call(
+            &self.eth_api,
+            transaction,
+            block_number,
+            EvmOverrides::new(Some(final_overrides), block_overrides),
+        )
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn estimate_gas(
+        &self,
+        transaction: TransactionRequest,
+        block_number: Option<BlockId>,
+        overrides: Option<StateOverride>,
+    ) -> RpcResult<U256> {
+        debug!(
+            message = "rpc::estimate_gas",
+            transaction = ?transaction,
+            block_number = ?block_number,
+            overrides = ?overrides,
+        );
+
+        let block_id = block_number.unwrap_or_default();
+        let mut pending_overrides = EvmOverrides::default();
+        // If the call is to pending block use cached override (if they exist)
+        if block_id.is_pending() {
+            self.metrics.estimate_gas.increment(1);
+            pending_overrides.state = self.flashblocks_state.get_state_overrides();
+        }
+
+        let mut state_overrides_builder =
+            StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
+        state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
+        let final_overrides = state_overrides_builder.build();
+
+        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn simulate_v1(
+        &self,
+        opts: SimulatePayload<TransactionRequest>,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Eth::NetworkTypes>>>> {
+        debug!(
+            message = "rpc::simulate_v1",
+            block_number = ?block_number,
+        );
+
+        let block_id = block_number.unwrap_or_default();
+        let mut pending_overrides = EvmOverrides::default();
+
+        // If the call is to pending block use cached override (if they exist)
+        if block_id.is_pending() {
+            self.metrics.simulate_v1.increment(1);
+            pending_overrides.state = self.flashblocks_state.get_state_overrides();
+        }
+
+        // Prepend flashblocks pending overrides to the block state calls
+        let mut block_state_calls: Vec<SimBlock<TransactionRequest>> = Vec::new();
+        for sim_block in opts.block_state_calls {
+            let mut state_overrides_builder =
+                StateOverridesBuilder::new(pending_overrides.state.clone().unwrap_or_default());
+            state_overrides_builder =
+                state_overrides_builder.extend(sim_block.state_overrides.unwrap_or_default());
+            let final_overrides = state_overrides_builder.build();
+
+            let block_state_call = SimBlock { state_overrides: Some(final_overrides), ..sim_block };
+            block_state_calls.push(block_state_call);
+        }
+
+        let payload = SimulatePayload { block_state_calls, ..opts };
+
+        EthCall::simulate_v1(&self.eth_api, payload, Some(block_id)).await.map_err(Into::into)
     }
 }
 

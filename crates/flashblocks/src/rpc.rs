@@ -5,7 +5,9 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types::{
-    simulate::{SimBlock, SimulatePayload, SimulatedBlock}, state::{EvmOverrides, StateOverridesBuilder}, BlockOverrides, TransactionRequest
+    BlockOverrides, TransactionRequest,
+    simulate::{SimBlock, SimulatePayload, SimulatedBlock},
+    state::{EvmOverrides, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::state::StateOverride;
 use jsonrpsee::{

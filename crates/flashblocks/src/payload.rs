@@ -1,7 +1,5 @@
-use std::collections::BTreeMap;
-
 use alloy_eips::eip4895::Withdrawal;
-use alloy_primitives::{map::foldhash::HashMap, Address, Bloom, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, Bloom, Bytes, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use reth_primitives::Receipt;
 use serde::{Deserialize, Serialize};

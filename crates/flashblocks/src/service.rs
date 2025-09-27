@@ -9,7 +9,7 @@ use crate::{
 };
 use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// Interval of liveness check of upstream, in milliseconds.
 pub const PING_INTERVAL_MS: u64 = 500;
@@ -83,8 +83,21 @@ where
                                                 );
                                             }
                                         },
-                                        Ok(Message::Text(_)) => {
-                                            error!("Received flashblock as plaintext, only compressed flashblocks supported. Set up websocket-proxy to use compressed flashblocks.");
+                                        Ok(Message::Text(text)) => {
+                                            match try_decode_plaintext_message(&text) {
+                                                Ok(payload) => {
+                                                    debug!(message = "Successfully decoded plaintext flashblock", payload_id = %payload.payload_id, index = payload.index);
+                                                    let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
+                                                        error!(message = "Failed to publish message to channel", error = %e);
+                                                    });
+                                                }
+                                                Err(e) => {
+                                                    error!(
+                                                        message = "error decoding plaintext flashblock message",
+                                                        error = %e
+                                                    );
+                                                }
+                                            }
                                         }
                                         Ok(Message::Close(_)) => {
                                             info!(message = "WebSocket connection closed by upstream");
@@ -178,18 +191,25 @@ async fn sleep(metrics: &Metrics, backoff: Duration) -> Duration {
 
 fn try_decode_message(bytes: &[u8]) -> eyre::Result<FlashBlock> {
     let text = try_parse_message(bytes)?;
+    parse_flashblock_json(&text)
+}
 
-    let payload: FlashblocksPayloadV1 = match serde_json::from_str(&text) {
+fn try_decode_plaintext_message(text: &str) -> eyre::Result<FlashBlock> {
+    parse_flashblock_json(text)
+}
+
+fn parse_flashblock_json(text: &str) -> eyre::Result<FlashBlock> {
+    let payload: FlashblocksPayloadV1 = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {
-            return Err(eyre::eyre!("failed to parse message: {}", e));
+            return Err(eyre::eyre!("failed to parse flashblock JSON: {}", e));
         }
     };
 
     let metadata: Metadata = match serde_json::from_value(payload.metadata.clone()) {
         Ok(m) => m,
         Err(e) => {
-            return Err(eyre::eyre!("failed to parse message metadata: {}", e));
+            return Err(eyre::eyre!("failed to parse flashblock metadata: {}", e));
         }
     };
 

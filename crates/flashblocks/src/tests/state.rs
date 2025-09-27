@@ -16,9 +16,9 @@ mod tests {
     use alloy_eips::{BlockHashOrNumber, Encodable2718};
     use alloy_genesis::{Genesis, GenesisAccount};
     use alloy_primitives::{
-        Address, B256, BlockNumber, Bytes, TxHash, U256, b256, map::foldhash::HashMap, address, bytes,
+        Address, B256, BlockNumber, Bytes, TxHash, U256, address, b256, bytes,
+        map::foldhash::HashMap,
     };
-    use std::str::FromStr;
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types::TransactionReceipt;
     use alloy_rpc_types_engine::PayloadId;
@@ -30,6 +30,7 @@ mod tests {
         transaction_pool::test_utils::TransactionBuilder,
     };
     use reth_db::{DatabaseEnv, test_utils::TempDatabase};
+    use std::str::FromStr;
 
     use reth_ethereum_primitives::{Block as EthBlock, Receipt};
     use reth_evm::{ConfigureEvm, execute::Executor};
@@ -209,10 +210,14 @@ mod tests {
         }
 
         fn new() -> Self {
-            // Use correct private keys from standard test mnemonic: "test test test test test test test test test test test junk"
-            let alice_signer = b256!("0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"); // Account 4: 0x15d34aaf54267db7d7c367839aaf71a00a2c6a65
-            let bob_signer = b256!("0x47c99abed3324a2707c28affff1267e45918ec8c3f20b8aa892e8b065d2942dd"); // Account 13: 0x1cbd3b2770909d4e10f157cabc84c7264073c9ec
-            let charlie_signer = b256!("0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97"); // Account 8: 0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f
+            // Use correct private keys from standard test mnemonic: "test test test test test test
+            // test test test test test junk"
+            let alice_signer =
+                b256!("0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"); // Account 4: 0x15d34aaf54267db7d7c367839aaf71a00a2c6a65
+            let bob_signer =
+                b256!("0x47c99abed3324a2707c28affff1267e45918ec8c3f20b8aa892e8b065d2942dd"); // Account 13: 0x1cbd3b2770909d4e10f157cabc84c7264073c9ec
+            let charlie_signer =
+                b256!("0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97"); // Account 8: 0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f
 
             let alice = address!("15d34aaf54267db7d7c367839aaf71a00a2c6a65");
             let bob = address!("1cbd3b2770909d4e10f157cabc84c7264073c9ec");
@@ -426,7 +431,8 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from_str("1000000000000000000100000").unwrap() // Genesis balance (1M ETH) + 100k wei received
+            U256::from_str("1000000000000000000100000").unwrap() /* Genesis balance (1M ETH) +
+                                                                  * 100k wei received */
         );
 
         test.send_flashblock(FlashblockBuilder::new(&test, 2).build()).await;
@@ -443,7 +449,8 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from_str("1000000000000000000100000").unwrap() // Genesis balance (1M ETH) + 100k wei received
+            U256::from_str("1000000000000000000100000").unwrap() /* Genesis balance (1M ETH) +
+                                                                  * 100k wei received */
         );
     }
 
@@ -492,7 +499,8 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from_str("1000000000000000000100000").unwrap() // Genesis balance (1M ETH) + 100k wei received
+            U256::from_str("1000000000000000000100000").unwrap() /* Genesis balance (1M ETH) +
+                                                                  * 100k wei received */
         );
 
         test.send_flashblock(
@@ -583,7 +591,8 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from_str("1000000000000000000100000").unwrap() // Genesis balance (1M ETH) + 100k wei received
+            U256::from_str("1000000000000000000100000").unwrap() /* Genesis balance (1M ETH) +
+                                                                  * 100k wei received */
         );
 
         test.send_flashblock(

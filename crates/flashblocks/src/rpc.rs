@@ -280,6 +280,7 @@ where
             tokio::select! {
                 receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
                     if let Some(receipt) = receipt {
+                        debug!("thru flashblock");
                         return Ok(receipt);
                     } else {
                         continue
@@ -287,6 +288,7 @@ where
                 }
                 receipt = self.wait_for_canonical_receipt(tx_hash) => {
                         if let Some(receipt) = receipt {
+                            debug!("thru canonical");
                             return Ok(receipt);
                         } else {
                             continue

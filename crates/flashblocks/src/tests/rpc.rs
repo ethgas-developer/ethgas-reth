@@ -502,7 +502,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "fix me"]
     #[tokio::test]
     async fn test_send_raw_transaction_sync() -> eyre::Result<()> {
         reth_tracing::init_test_tracing();

@@ -16,14 +16,15 @@ mod tests {
     use alloy_eips::{BlockHashOrNumber, Encodable2718};
     use alloy_genesis::{Genesis, GenesisAccount};
     use alloy_primitives::{
-        Address, B256, BlockNumber, Bytes, TxHash, U256, b256, map::foldhash::HashMap,
+        Address, B256, BlockNumber, Bytes, TxHash, U256, b256, map::foldhash::HashMap, address, bytes,
     };
+    use std::str::FromStr;
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types::TransactionReceipt;
     use alloy_rpc_types_engine::PayloadId;
     use reth::{
         builder::NodeTypesWithDBAdapter,
-        chainspec::{Chain, ChainSpecBuilder, EthChainSpec},
+        chainspec::{Chain, ChainSpecBuilder, EthChainSpec, MAINNET},
         providers::{AccountReader, BlockNumReader, BlockReader},
         revm::database::StateProviderDatabase,
         transaction_pool::test_utils::TransactionBuilder,
@@ -45,6 +46,10 @@ mod tests {
 
     const TRANSFER_ETH_HASH: TxHash =
         b256!("0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a");
+
+    const TRANSFER_ETH_TX: Bytes = bytes!(
+        "0x02f87383014a3480808449504f80830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018ad3c21bcb3f6efc39800080c0019f5a6fe2065583f4f3730e82e5725f651cbbaf11dc1f82c8d29ba1f3f99e5383a061e0bf5dfff4a9bc521ad426eee593d3653c5c330ae8a65fad3175d30f291d31"
+    );
 
     // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical
     // block so it can be processed by the state processor
@@ -118,7 +123,7 @@ mod tests {
                 .nonce(self.account_state(from).nonce)
                 .value(amount)
                 .gas_limit(21_000)
-                .max_fee_per_gas(200)
+                .max_fee_per_gas(2_000_000_000) // 2 gwei
                 .into_eip1559()
         }
 
@@ -136,7 +141,7 @@ mod tests {
                 .nonce(nonce)
                 .value(amount)
                 .gas_limit(21_000)
-                .max_fee_per_gas(200)
+                .max_fee_per_gas(2_000_000_000) // 2 gwei
                 .into_eip1559()
         }
 
@@ -162,6 +167,7 @@ mod tests {
                     number: current_tip.number() + 1,
                     timestamp: current_tip.header().timestamp() + 2,
                     gas_limit: current_tip.header().gas_limit(),
+                    excess_blob_gas: current_tip.header().excess_blob_gas,
                     ..Header::default()
                 }),
                 BlockBody { transactions, ommers: vec![], withdrawals: None },
@@ -203,26 +209,20 @@ mod tests {
         }
 
         fn new() -> Self {
-            let keys = reth_testing_utils::generators::generate_keys(&mut rand::rng(), 3);
-            let alice_signer = keys[0];
-            let bob_signer = keys[1];
-            let charli_signer = keys[2];
+            // Use correct private keys from standard test mnemonic: "test test test test test test test test test test test junk"
+            let alice_signer = b256!("0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"); // Account 4: 0x15d34aaf54267db7d7c367839aaf71a00a2c6a65
+            let bob_signer = b256!("0x47c99abed3324a2707c28affff1267e45918ec8c3f20b8aa892e8b065d2942dd"); // Account 13: 0x1cbd3b2770909d4e10f157cabc84c7264073c9ec
+            let charlie_signer = b256!("0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97"); // Account 8: 0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f
 
-            let alice = public_key_to_address(alice_signer.public_key());
-            let bob = public_key_to_address(bob_signer.public_key());
-            let charlie = public_key_to_address(charli_signer.public_key());
+            let alice = address!("15d34aaf54267db7d7c367839aaf71a00a2c6a65");
+            let bob = address!("1cbd3b2770909d4e10f157cabc84c7264073c9ec");
+            let charlie = address!("23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f");
 
-            let items = vec![
-                (alice, GenesisAccount::default().with_balance(U256::from(100_000_000))),
-                (bob, GenesisAccount::default().with_balance(U256::from(100_000_000))),
-                (charlie, GenesisAccount::default().with_balance(U256::from(100_000_000))),
-            ];
-
-            // TDOD
-            let genesis = Genesis::default().with_gas_limit(100_000_000).extend_accounts(items);
+            let genesis: Genesis =
+                serde_json::from_str(include_str!("assets/genesis.json")).unwrap();
             let chain_spec = Arc::new(
                 ChainSpecBuilder::default()
-                    .chain(Chain::dev())
+                    .chain(MAINNET.chain)
                     .genesis(genesis)
                     .prague_activated()
                     .build(),
@@ -241,6 +241,7 @@ mod tests {
                 .expect("able to recover block");
 
             let flashblocks = FlashblocksState::new(provider.clone(), chain_spec.clone());
+            flashblocks.start();
 
             flashblocks.on_canonical_block_received(&block);
 
@@ -257,9 +258,9 @@ mod tests {
                 },
                 user_to_private_key: {
                     let mut res = HashMap::default();
-                    res.insert(User::Alice, alice_signer.secret_bytes().into());
-                    res.insert(User::Bob, bob_signer.secret_bytes().into());
-                    res.insert(User::Charlie, charli_signer.secret_bytes().into());
+                    res.insert(User::Alice, alice_signer);
+                    res.insert(User::Bob, bob_signer);
+                    res.insert(User::Charlie, charlie_signer);
                     res
                 },
             }
@@ -278,7 +279,7 @@ mod tests {
         pub fn new_base(harness: &TestHarness) -> Self {
             Self {
                 canonical_block_number: None,
-                transactions: vec![],
+                transactions: vec![TRANSFER_ETH_TX],
                 receipts: {
                     let mut receipts = HashMap::default();
                     receipts.insert(
@@ -315,7 +316,7 @@ mod tests {
             assert_ne!(self.index, 0, "Cannot set txns for initial flashblock");
             self.transactions.clear();
 
-            let mut cumulative_gas_used = 0;
+            let mut cumulative_gas_used = 21000;
             for txn in transactions.iter() {
                 cumulative_gas_used = cumulative_gas_used + txn.gas_limit();
                 self.transactions.push(txn.encoded_2718().into());
@@ -425,7 +426,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_000)
+            U256::from_str("1000000000000000000100000").unwrap() // Genesis balance (1M ETH) + 100k wei received
         );
 
         test.send_flashblock(FlashblockBuilder::new(&test, 2).build()).await;
@@ -442,7 +443,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_000)
+            U256::from_str("1000000000000000000100000").unwrap() // Genesis balance (1M ETH) + 100k wei received
         );
     }
 
@@ -491,7 +492,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_000)
+            U256::from_str("1000000000000000000100000").unwrap() // Genesis balance (1M ETH) + 100k wei received
         );
 
         test.send_flashblock(
@@ -537,7 +538,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_200_000)
+            U256::from(1000000000000000000100000u128)
         );
     }
 
@@ -582,7 +583,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_000)
+            U256::from_str("1000000000000000000100000").unwrap() // Genesis balance (1M ETH) + 100k wei received
         );
 
         test.send_flashblock(
@@ -603,7 +604,7 @@ mod tests {
         let pending = test.flashblocks.get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
-        assert_eq!(pending.transactions.len(), 2);
+        assert_eq!(pending.transactions.len(), 1);
 
         let overrides =
             test.flashblocks.get_state_overrides().expect("should be set from txn execution");
@@ -615,7 +616,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_200_000)
+            U256::from(1000000000000000000100000u128)
         );
 
         test.new_canonical_block(vec![test.build_transaction_to_send_eth_with_nonce(
@@ -629,7 +630,7 @@ mod tests {
         let pending = test.flashblocks.get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
-        assert_eq!(pending.transactions.len(), 2);
+        assert_eq!(pending.transactions.len(), 1);
 
         let overrides =
             test.flashblocks.get_state_overrides().expect("should be set from txn execution");
@@ -641,7 +642,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_100)
+            U256::from(1000000000000000000100000u128)
         );
     }
 
@@ -787,7 +788,7 @@ mod tests {
 
         let block_one = test.current_canonical_block();
         assert_eq!(block_one.number, 1);
-        assert_eq!(block_one.transaction_count(), 2);
+        assert_eq!(block_one.transaction_count(), 1);
         assert!(test.flashblocks.get_block(true).is_none());
 
         test.new_canonical_block(vec![
@@ -798,7 +799,7 @@ mod tests {
 
         let block_two = test.current_canonical_block();
         assert_eq!(block_two.number, 2);
-        assert_eq!(block_two.transaction_count(), 3);
+        assert_eq!(block_two.transaction_count(), 2);
         assert!(test.flashblocks.get_block(true).is_none());
     }
 }

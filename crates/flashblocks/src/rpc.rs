@@ -425,8 +425,11 @@ where
         loop {
             match receiver.recv().await {
                 Ok(flashblock) if flashblock.metadata.receipts.contains_key(&tx_hash) => {
-                    debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
-                    return self.flashblocks_state.get_transaction_receipt(tx_hash);
+                    let receipt = self.flashblocks_state.get_transaction_receipt(tx_hash);
+                    if receipt.is_some() {
+                        debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
+                    }
+                    return receipt;
                 }
                 Ok(_) => {
                     trace!(message = "flashblock does not contain receipt", tx_hash = %tx_hash);

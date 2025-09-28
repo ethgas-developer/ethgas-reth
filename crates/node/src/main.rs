@@ -62,6 +62,7 @@ fn main() {
                                 Arc::new(FlashblocksState::new(ctx.provider().clone(), chain_spec))
                             })
                             .clone();
+
                         Ok(async move {
                             while let Some(note) = ctx.notifications.try_next().await? {
                                 if let Some(committed) = note.committed_chain() {
@@ -96,6 +97,7 @@ fn main() {
                                 ))
                             })
                             .clone();
+                        fb.start();
 
                         let mut flashblocks_client = FlashblocksSubscriber::new(fb.clone(), ws_url);
                         flashblocks_client.start();

@@ -4,7 +4,7 @@ mod tests {
         payload::{
             ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
         },
-        rpc::FlashblocksAPI,
+        rpc::{FlashblocksAPI, PendingBlocksAPI},
         service::FlashblocksReceiver,
         state::FlashblocksState,
         tests::utils::create_test_provider_factory,
@@ -104,11 +104,22 @@ mod tests {
                 .expect("can lookup account state")
                 .expect("should be existing account state");
 
-            let nonce = self.flashblocks.get_transaction_count(self.address(u)).to::<u64>();
-            let balance =
-                self.flashblocks.get_balance(self.address(u)).unwrap_or(basic_account.balance);
+            let nonce = self
+                .flashblocks
+                .get_pending_blocks()
+                .get_transaction_count(self.address(u))
+                .to::<u64>();
+            let balance = self
+                .flashblocks
+                .get_pending_blocks()
+                .get_balance(self.address(u))
+                .unwrap_or(basic_account.balance);
 
-            Account { nonce, balance, bytecode_hash: basic_account.bytecode_hash }
+            Account {
+                nonce: nonce + basic_account.nonce,
+                balance,
+                bytecode_hash: basic_account.bytecode_hash,
+            }
         }
 
         fn build_transaction_to_send_eth(
@@ -151,7 +162,10 @@ mod tests {
             sleep(Duration::from_millis(SLEEP_TIME)).await;
         }
 
-        async fn new_canonical_block(&mut self, mut user_transactions: Vec<TransactionSigned>) {
+        async fn new_canonical_block_without_processing(
+            &mut self,
+            mut user_transactions: Vec<TransactionSigned>,
+        ) -> RecoveredBlock<EthBlock> {
             let current_tip = self.current_canonical_block();
 
             let mut transactions: Vec<TransactionSigned> = vec![];
@@ -205,6 +219,13 @@ mod tests {
                 .unwrap();
             provider_rw.commit().unwrap();
 
+            self.flashblocks.on_canonical_block_received(&block);
+
+            block
+        }
+
+        async fn new_canonical_block(&mut self, mut user_transactions: Vec<TransactionSigned>) {
+            let block = self.new_canonical_block_without_processing(user_transactions).await;
             self.flashblocks.on_canonical_block_received(&block);
             sleep(Duration::from_millis(SLEEP_TIME)).await;
         }
@@ -394,12 +415,21 @@ mod tests {
         let test = TestHarness::new();
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
-        assert_eq!(test.flashblocks.get_block(true).expect("block is built").transactions.len(), 1);
+        assert_eq!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
 
-        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
         assert!(
             !test
                 .flashblocks
+                .get_pending_blocks()
                 .get_state_overrides()
                 .unwrap()
                 .contains_key(&test.address(User::Alice))
@@ -416,13 +446,16 @@ mod tests {
         )
         .await;
 
-        let pending = test.flashblocks.get_block(true);
+        let pending = test.flashblocks.get_pending_blocks().get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 2);
 
-        let overrides =
-            test.flashblocks.get_state_overrides().expect("should be set from txn execution");
+        let overrides = test
+            .flashblocks
+            .get_pending_blocks()
+            .get_state_overrides()
+            .expect("should be set from txn execution");
 
         assert!(overrides.get(&test.address(User::Alice)).is_some());
         assert_eq!(
@@ -439,6 +472,7 @@ mod tests {
 
         let overrides = test
             .flashblocks
+            .get_pending_blocks()
             .get_state_overrides()
             .expect("should be set from txn execution in flashblock index 1");
 
@@ -462,12 +496,21 @@ mod tests {
         let initial_base = FlashblockBuilder::new_base(&test).build();
         let initial_block_number = initial_base.metadata.block_number;
         test.send_flashblock(initial_base).await;
-        assert_eq!(test.flashblocks.get_block(true).expect("block is built").transactions.len(), 1);
+        assert_eq!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
 
-        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
         assert!(
             !test
                 .flashblocks
+                .get_pending_blocks()
                 .get_state_overrides()
                 .unwrap()
                 .contains_key(&test.address(User::Alice))
@@ -484,13 +527,16 @@ mod tests {
         )
         .await;
 
-        let pending = test.flashblocks.get_block(true);
+        let pending = test.flashblocks.get_pending_blocks().get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 2);
 
-        let overrides =
-            test.flashblocks.get_state_overrides().expect("should be set from txn execution");
+        let overrides = test
+            .flashblocks
+            .get_pending_blocks()
+            .get_state_overrides()
+            .expect("should be set from txn execution");
 
         assert!(overrides.get(&test.address(User::Alice)).is_some());
         assert_eq!(
@@ -510,15 +556,29 @@ mod tests {
         )
         .await;
 
-        assert_eq!(test.flashblocks.get_block(true).expect("block is built").transactions.len(), 1);
         assert_eq!(
-            test.flashblocks.get_block(true).expect("block is built").header.number,
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
+        assert_eq!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .expect("block is built")
+                .header
+                .number,
             initial_block_number + 1
         );
 
-        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
         assert!(
             test.flashblocks
+                .get_pending_blocks()
                 .get_state_overrides()
                 .unwrap()
                 .contains_key(&test.address(User::Alice))
@@ -536,8 +596,11 @@ mod tests {
         )
         .await;
 
-        let overrides =
-            test.flashblocks.get_state_overrides().expect("should be set from txn execution");
+        let overrides = test
+            .flashblocks
+            .get_pending_blocks()
+            .get_state_overrides()
+            .expect("should be set from txn execution");
 
         assert!(overrides.get(&test.address(User::Alice)).is_some());
         assert_eq!(
@@ -556,11 +619,20 @@ mod tests {
         let mut test = TestHarness::new();
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
-        assert_eq!(test.flashblocks.get_block(true).expect("block is built").transactions.len(), 1);
-        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert_eq!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
+        assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
         assert!(
             !test
                 .flashblocks
+                .get_pending_blocks()
                 .get_state_overrides()
                 .unwrap()
                 .contains_key(&test.address(User::Alice))
@@ -576,13 +648,16 @@ mod tests {
                 .build(),
         )
         .await;
-        let pending = test.flashblocks.get_block(true);
+        let pending = test.flashblocks.get_pending_blocks().get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 2);
 
-        let overrides =
-            test.flashblocks.get_state_overrides().expect("should be set from txn execution");
+        let overrides = test
+            .flashblocks
+            .get_pending_blocks()
+            .get_state_overrides()
+            .expect("should be set from txn execution");
 
         assert!(overrides.get(&test.address(User::Alice)).is_some());
         assert_eq!(
@@ -610,13 +685,13 @@ mod tests {
                 .build(),
         )
         .await;
-        let pending = test.flashblocks.get_block(true);
+        let pending = test.flashblocks.get_pending_blocks().get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 1);
 
         let overrides =
-            test.flashblocks.get_state_overrides().expect("should be set from txn execution");
+            test.flashblocks.get_pending_blocks().get_state_overrides().expect("should be set from txn execution");
 
         assert!(overrides.get(&test.address(User::Alice)).is_some());
         assert_eq!(
@@ -636,13 +711,13 @@ mod tests {
         )])
         .await;
 
-        let pending = test.flashblocks.get_block(true);
+        let pending = test.flashblocks.get_pending_blocks().get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 1);
 
         let overrides =
-            test.flashblocks.get_state_overrides().expect("should be set from txn execution");
+            test.flashblocks.get_pending_blocks().get_state_overrides().expect("should be set from txn execution");
 
         assert!(overrides.get(&test.address(User::Alice)).is_some());
         assert_eq!(
@@ -662,7 +737,7 @@ mod tests {
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
-        let current_block = test.flashblocks.get_block(true);
+        let current_block = test.flashblocks.get_pending_blocks().get_block(true);
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -676,7 +751,7 @@ mod tests {
         )
         .await;
 
-        let pending_block = test.flashblocks.get_block(true);
+        let pending_block = test.flashblocks.get_pending_blocks().get_block(true);
 
         // When the flashblock is invalid, the chain doesn't progress
         assert_eq!(pending_block.unwrap().hash(), current_block.unwrap().hash());
@@ -689,7 +764,7 @@ mod tests {
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
-        let current_block = test.flashblocks.get_block(true).expect("should be a block");
+        let current_block = test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
 
         assert_eq!(current_block.header().number, 1);
         assert_eq!(current_block.transactions.len(), 1);
@@ -699,7 +774,7 @@ mod tests {
         )
         .await;
 
-        let current_block = test.flashblocks.get_block(true);
+        let current_block = test.flashblocks.get_pending_blocks().get_block(true);
         assert!(current_block.is_none());
     }
 
@@ -710,7 +785,7 @@ mod tests {
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
-        let current_block = test.flashblocks.get_block(true).expect("should be a block");
+        let current_block = test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
 
         assert_eq!(current_block.header().number, 1);
         assert_eq!(current_block.transactions.len(), 1);
@@ -720,23 +795,23 @@ mod tests {
         )
         .await;
 
-        let current_block = test.flashblocks.get_block(true).expect("should be a block");
+        let current_block = test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
 
         assert_eq!(current_block.header().number, 2);
         assert_eq!(current_block.transactions.len(), 1);
     }
 
     #[tokio::test]
-    async fn test_non_sequential_payload_ignored() {
+    async fn test_non_sequential_payload_clears_pending_state() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
-        assert!(test.flashblocks.get_block(true).is_none());
+        assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
         // Just the block info transaction
-        assert_eq!(test.flashblocks.get_block(true).expect("should be set").transactions.len(), 1);
+        assert_eq!(test.flashblocks.get_pending_blocks().get_block(true).expect("should be set").transactions.len(), 1);
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 3)
@@ -749,9 +824,7 @@ mod tests {
         )
         .await;
 
-        // Still the block info transaction, the txns in the third payload are ignored as it's
-        // missing a Flashblock
-        assert_eq!(test.flashblocks.get_block(true).expect("should be set").transactions.len(), 1);
+        assert_eq!(test.flashblocks.get_pending_blocks().is_none(), true);
     }
 
     #[tokio::test]
@@ -770,10 +843,10 @@ mod tests {
             .build();
 
         test.send_flashblock(fb.clone()).await;
-        let block = test.flashblocks.get_block(true);
+        let block = test.flashblocks.get_pending_blocks().get_block(true);
 
         test.send_flashblock(fb.clone()).await;
-        let block_two = test.flashblocks.get_block(true);
+        let block_two = test.flashblocks.get_pending_blocks().get_block(true);
 
         assert_eq!(block, block_two);
     }
@@ -786,7 +859,7 @@ mod tests {
         let genesis_block = test.current_canonical_block();
         assert_eq!(genesis_block.number, 0);
         assert_eq!(genesis_block.transaction_count(), 0);
-        assert!(test.flashblocks.get_block(true).is_none());
+        assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
         test.new_canonical_block(vec![test.build_transaction_to_send_eth(
             User::Alice,
@@ -798,7 +871,7 @@ mod tests {
         let block_one = test.current_canonical_block();
         assert_eq!(block_one.number, 1);
         assert_eq!(block_one.transaction_count(), 1);
-        assert!(test.flashblocks.get_block(true).is_none());
+        assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
         test.new_canonical_block(vec![
             test.build_transaction_to_send_eth(User::Bob, User::Charlie, 100),
@@ -809,6 +882,6 @@ mod tests {
         let block_two = test.current_canonical_block();
         assert_eq!(block_two.number, 2);
         assert_eq!(block_two.transaction_count(), 2);
-        assert!(test.flashblocks.get_block(true).is_none());
+        assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
     }
 }

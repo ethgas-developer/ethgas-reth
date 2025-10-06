@@ -1,12 +1,13 @@
 use crate::payload::FlashBlock;
 use alloy_consensus::Header;
+use alloy_eips::BlockNumberOrTag;
 use alloy_network::Ethereum;
 use alloy_primitives::{
     Address, B256, BlockNumber, Sealed, TxHash, U256,
     map::foldhash::{HashMap, HashMapExt},
 };
 use alloy_provider::network::{TransactionResponse, primitives::BlockTransactions};
-use alloy_rpc_types::{Transaction, TransactionReceipt};
+use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt};
 use alloy_rpc_types_eth::{Header as RPCHeader, state::StateOverride};
 use eyre::eyre;
 use reth::revm::{db::Cache, state::EvmState};
@@ -147,6 +148,10 @@ impl PendingBlocks {
         self.headers.last().unwrap().number
     }
 
+    pub fn canonical_block_number(&self) -> BlockNumberOrTag {
+        BlockNumberOrTag::Number(self.headers.first().unwrap().number - 1)
+    }
+
     pub fn latest_flashblock_index(&self) -> u64 {
         self.flashblocks.last().unwrap().index
     }
@@ -181,10 +186,10 @@ impl PendingBlocks {
         let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
 
         let transactions = if full {
-            BlockTransactions::Full(block_transactions.clone())
+            BlockTransactions::Full(block_transactions)
         } else {
             let tx_hashes: Vec<B256> =
-                block_transactions.clone().iter().map(|tx| tx.tx_hash()).collect();
+                block_transactions.iter().map(|tx| tx.tx_hash()).collect();
             BlockTransactions::Hashes(tx_hashes.clone())
         };
 
@@ -214,5 +219,20 @@ impl PendingBlocks {
 
     pub fn get_state_overrides(&self) -> Option<StateOverride> {
         self.state_overrides.clone()
+    }
+
+    pub fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
+        let mut logs = Vec::new();
+
+        // Iterate through all transaction receipts in pending state
+        for receipt in self.transaction_receipts.values() {
+            for log in receipt.inner.logs() {
+                if filter.matches(&log.inner) {
+                    logs.push(log.clone());
+                }
+            }
+        }
+
+        logs
     }
 }

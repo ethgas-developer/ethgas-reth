@@ -2,7 +2,7 @@ use crate::{
     metrics::Metrics,
     payload::FlashBlock,
     pending::{PendingBlocks, PendingBlocksBuilder},
-    rpc::FlashblocksAPI,
+    rpc::{FlashblocksAPI, PendingBlocksAPI},
     service::FlashblocksReceiver,
 };
 use alloy_consensus::{
@@ -15,10 +15,10 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, Sealable, TxHash, U256,
     map::{B256HashMap, foldhash::HashMap},
 };
-use alloy_rpc_types::{TransactionTrait, Withdrawal};
+use alloy_rpc_types::{Filter, Log, TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
 use reth::{
     chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec},
@@ -133,36 +133,49 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
 }
 
 impl<Client> FlashblocksAPI for FlashblocksState<Client> {
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Ethereum>> {
-        self.pending_blocks.load().as_ref().map(|pb| pb.get_latest_block(full))
-    }
-
-    fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Ethereum>> {
-        self.pending_blocks.load().as_ref().and_then(|pb| pb.get_receipt(tx_hash))
-    }
-
-    fn get_transaction_count(&self, address: Address) -> U256 {
-        self.pending_blocks
-            .load()
-            .as_ref()
-            .map(|pb| pb.get_transaction_count(address))
-            .unwrap_or_else(|| U256::from(0))
-    }
-
-    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Ethereum>> {
-        self.pending_blocks.load().as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
-    }
-
-    fn get_balance(&self, address: Address) -> Option<U256> {
-        self.pending_blocks.load().as_ref().and_then(|pb| pb.get_balance(address))
-    }
-
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<FlashBlock> {
         self.flashblock_sender.subscribe()
     }
 
+    fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>> {
+        self.pending_blocks.load()
+    }
+}
+
+impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
+    fn get_canonical_block_number(&self) -> BlockNumberOrTag {
+        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
+    }
+
+    fn get_transaction_count(&self, address: Address) -> U256 {
+        self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
+    }
+
+    fn get_block(&self, full: bool) -> Option<RpcBlock<Ethereum>> {
+        self.as_ref().map(|pb| pb.get_latest_block(full))
+    }
+
+    fn get_transaction_receipt(
+        &self,
+        tx_hash: alloy_primitives::TxHash,
+    ) -> Option<RpcReceipt<Ethereum>> {
+        self.as_ref().and_then(|pb| pb.get_receipt(tx_hash))
+    }
+
+    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Ethereum>> {
+        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
+    }
+
+    fn get_balance(&self, address: Address) -> Option<U256> {
+        self.as_ref().and_then(|pb| pb.get_balance(address))
+    }
+
     fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.pending_blocks.load().as_ref().and_then(|pb| pb.get_state_overrides())
+        self.as_ref().map(|pb| pb.get_state_overrides()).unwrap_or_default()
+    }
+
+    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
+        self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
     }
 }
 
@@ -255,6 +268,7 @@ where
 
                     Ok(None)
                 } else {
+                    // If we had a reorg, we need to reset all flashblocks state
                     let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
                     let tracked_txn_hashes: HashSet<_> =
                         tracked_txns.clone().iter().map(|tx| tx.tx_hash()).collect();
@@ -267,7 +281,7 @@ where
                     if tracked_txn_hashes.len() != block_txn_hashes.len() ||
                         tracked_txn_hashes != block_txn_hashes
                     {
-                        warn!(
+                        debug!(
                             message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
                             latest_pending_block = pending_blocks.latest_block_number(),
                             canonical_block = block.number,
@@ -301,6 +315,8 @@ where
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
         match &prev_pending_blocks {
             Some(pending_blocks) => {
+                // We have received the next flashblock for the current block
+                // or the first flashblock for the next block
                 if self.is_next_flashblock(pending_blocks, flashblock) {
                     let mut flashblocks = pending_blocks.get_flashblocks();
                     flashblocks.push(flashblock.clone());
@@ -314,17 +330,24 @@ where
                         new_block = %flashblock.metadata.block_number,
                     );
                     Ok(None)
+                } else if pending_blocks.latest_flashblock_index() == flashblock.index {
+                    // We have received a duplicate flashblock for the current block
+                    self.metrics.unexpected_block_order.increment(1);
+                    warn!(
+                        message = "Received duplicate Flashblock for current block, ignoring",
+                        curr_block = %pending_blocks.latest_block_number(),
+                        flashblock_index = %flashblock.index,
+                    );
+                    Ok(prev_pending_blocks.clone())
                 } else {
                     // We have received a non-sequential flashblock for the current block
-                    self.metrics.unexpected_block_order.increment(1);
-
-                    info!(
-                        message = "Received non-sequential Flashblock, ignoring and moving on",
+                    error!(
+                        message = "Received non-sequential Flashblock for current block, zeroing Flashblocks until we receive a base Flashblock",
                         curr_block = %pending_blocks.latest_block_number(),
                         new_block = %flashblock.metadata.block_number,
                     );
 
-                    Ok(Some(pending_blocks.clone()))
+                    Ok(None)
                 }
             }
             None => {
@@ -355,7 +378,7 @@ where
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self.client.header_by_number(canonical_block)?.ok_or(eyre!(
-            "Failed to extract header for canonical block number {}",
+            "Failed to extract header for canonical block number {}. This is okay if your node is not fully synced to tip yet.",
             canonical_block
         ))?;
 
@@ -562,9 +585,9 @@ where
                             move_precompile_to: None,
                         };
                         state_cache_builder = state_cache_builder.append(*addr, acc_override);
-                        pending_blocks_builder
-                            .with_transaction_state(*transaction.tx_hash(), state.clone());
                     }
+                    pending_blocks_builder
+                        .with_transaction_state(*transaction.tx_hash(), state.clone());
                     evm.db_mut().commit(state);
                 }
             }

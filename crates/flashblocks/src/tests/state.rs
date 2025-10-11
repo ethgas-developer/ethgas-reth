@@ -224,7 +224,7 @@ mod tests {
             block
         }
 
-        async fn new_canonical_block(&mut self, mut user_transactions: Vec<TransactionSigned>) {
+        async fn new_canonical_block(&mut self, user_transactions: Vec<TransactionSigned>) {
             let block = self.new_canonical_block_without_processing(user_transactions).await;
             self.flashblocks.on_canonical_block_received(&block);
             sleep(Duration::from_millis(SLEEP_TIME)).await;

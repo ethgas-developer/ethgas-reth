@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{metrics::Metrics, payload::FlashBlock, pending::PendingBlocks};
-use alloy_consensus::TxReceipt;
+use crate::{metrics::Metrics, pending::PendingBlocks};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
@@ -41,7 +40,7 @@ pub trait FlashblocksAPI {
     fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>>;
 
     /// Creates a subscription to receive flashblock updates.
-    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<FlashBlock>;
+    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>>;
 }
 
 pub trait PendingBlocksAPI {
@@ -505,13 +504,9 @@ where
 
         loop {
             match receiver.recv().await {
-                Ok(flashblock) if flashblock.metadata.receipts.contains_key(&tx_hash) => {
-                    let pending_blocks = self.flashblocks_state.get_pending_blocks();
-                    let receipt = pending_blocks.get_transaction_receipt(tx_hash);
-                    if receipt.is_some() {
-                        debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
-                    }
-                    return receipt;
+                Ok(pending_state) if pending_state.get_receipt(tx_hash).is_some() => {
+                    debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
+                    return pending_state.get_receipt(tx_hash);
                 }
                 Ok(_) => {
                     trace!(message = "flashblock does not contain receipt", tx_hash = %tx_hash);

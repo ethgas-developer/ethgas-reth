@@ -18,7 +18,7 @@ use reth::{
     builder::{EngineNodeLauncher, Node, TreeConfig},
     providers::providers::BlockchainProvider,
 };
-use tracing::info;
+use tracing::{debug, info};
 use url::Url;
 
 #[global_allocator]
@@ -39,9 +39,10 @@ impl FlashblocksArgs {
 fn main() {
     Cli::<EthereumChainSpecParser, FlashblocksArgs>::parse()
         .run(|builder, flashblocks_args| async move {
-            info!(message = "starting custom Base node");
+            info!(message = "starting custom eth node");
 
             let flashblocks_enabled = flashblocks_args.flashblocks_enabled();
+            debug!("Flashblocks enabled: {}", flashblocks_enabled);
             let node = EthereumNode::default();
 
             let chain_spec = Arc::new(ChainSpecBuilder::mainnet().prague_activated().build());

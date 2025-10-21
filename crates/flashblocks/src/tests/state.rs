@@ -214,7 +214,6 @@ mod tests {
                     vec![block.clone()],
                     &execution_outcome,
                     Default::default(),
-                    Default::default(),
                 )
                 .unwrap();
             provider_rw.commit().unwrap();

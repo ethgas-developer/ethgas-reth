@@ -6,7 +6,7 @@ use crate::{
     service::FlashblocksReceiver,
 };
 use alloy_consensus::{
-    Header, ReceiptEnvelope, TxEnvelope, TxReceipt,
+    Header, TxEnvelope, TxReceipt,
     transaction::{Recovered, SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::BlockNumberOrTag;
@@ -37,7 +37,6 @@ use reth_primitives_traits::RecoveredBlock;
 use reth_rpc_convert::{RpcTransaction, transaction::ConvertReceiptInput};
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, HashSet},
     sync::Arc,
     time::Instant,
@@ -537,18 +536,17 @@ where
                 };
 
                 let input: ConvertReceiptInput<'_, EthPrimitives> = ConvertReceiptInput {
-                    receipt: Cow::Borrowed(&receipt),
+                    receipt: receipt.clone(),
                     tx: Recovered::new_unchecked(transaction, sender),
                     gas_used: receipt.cumulative_gas_used() - gas_used,
                     next_log_index,
                     meta,
                 };
 
-                let tx_type = input.receipt.tx_type;
                 let blob_params =
                     self.client.chain_spec().blob_params_at_timestamp(input.meta.timestamp);
-                let eth_receipt = build_receipt(&input, blob_params, |receipt_with_bloom| {
-                    ReceiptEnvelope::from_typed(tx_type, receipt_with_bloom)
+                let eth_receipt = build_receipt(input, blob_params, |receipt, next_log_index, meta| {
+                    receipt.into_rpc(next_log_index, meta).into()
                 });
 
                 pending_blocks_builder.with_receipt(*transaction.tx_hash(), eth_receipt);

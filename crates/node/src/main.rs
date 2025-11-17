@@ -7,7 +7,7 @@ use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth::{
     chainspec::{ChainSpecBuilder, EthereumChainSpecParser},
-    cli::Cli,
+    cli::Cli, version::{RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata},
 };
 use reth_exex::ExExEvent;
 use reth_node_ethereum::EthereumNode;
@@ -24,6 +24,8 @@ use url::Url;
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
 
+pub const NODE_RETH_CLIENT_VERSION: &str = concat!("ethgas-reth/v", env!("CARGO_PKG_VERSION"));
+
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 struct FlashblocksArgs {
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
@@ -37,9 +39,29 @@ impl FlashblocksArgs {
 }
 
 fn main() {
+    let default_version_metadata = default_reth_version_metadata();
+    try_init_version_metadata(RethCliVersionConsts {
+        name_client: "ETHGAS-RETH".to_string().into(),
+        cargo_pkg_version: format!(
+            "{}/{}",
+            default_version_metadata.cargo_pkg_version,
+            env!("CARGO_PKG_VERSION")
+        )
+        .into(),
+        p2p_client_version: format!(
+            "{}/{}",
+            default_version_metadata.p2p_client_version, NODE_RETH_CLIENT_VERSION
+        )
+        .into(),
+        extra_data: format!("{}/{}", default_version_metadata.extra_data, NODE_RETH_CLIENT_VERSION)
+            .into(),
+        ..default_version_metadata
+    })
+    .expect("Unable to init version metadata");
+
     Cli::<EthereumChainSpecParser, FlashblocksArgs>::parse()
         .run(|builder, flashblocks_args| async move {
-            info!(message = "starting custom eth node");
+            info!(message = "starting ethgas-reth rpc node");
 
             let flashblocks_enabled = flashblocks_args.flashblocks_enabled();
             debug!("Flashblocks enabled: {}", flashblocks_enabled);

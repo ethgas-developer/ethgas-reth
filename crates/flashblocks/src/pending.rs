@@ -1,4 +1,6 @@
-use crate::payload::FlashBlock;
+use std::sync::Arc;
+
+use crate::{payload::FlashBlock, rpc::PendingBlocksAPI};
 use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::Ethereum;
@@ -9,9 +11,11 @@ use alloy_primitives::{
 use alloy_provider::network::{TransactionResponse, primitives::BlockTransactions};
 use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt};
 use alloy_rpc_types_eth::{Header as RPCHeader, state::StateOverride};
+use arc_swap::Guard;
 use eyre::eyre;
 use reth::revm::{db::Cache, state::EvmState};
-use reth_rpc_eth_api::RpcBlock;
+use reth_rpc_convert::RpcTransaction;
+use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 
 pub struct PendingBlocksBuilder {
     flashblocks: Vec<FlashBlock>,
@@ -23,6 +27,7 @@ pub struct PendingBlocksBuilder {
     transaction_receipts: HashMap<B256, TransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
+    transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
@@ -39,7 +44,7 @@ impl PendingBlocksBuilder {
             transaction_receipts: HashMap::new(),
             transactions_by_hash: HashMap::new(),
             transaction_state: HashMap::new(),
-
+            transaction_senders: HashMap::new(),
             state_overrides: None,
             db_cache: Cache::default(),
         }
@@ -73,6 +78,12 @@ impl PendingBlocksBuilder {
     #[inline]
     pub(crate) fn with_db_cache(&mut self, cache: Cache) -> &Self {
         self.db_cache = cache;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn with_transaction_sender(&mut self, hash: B256, sender: Address) -> &Self {
+        self.transaction_senders.insert(hash, sender);
         self
     }
 
@@ -119,6 +130,7 @@ impl PendingBlocksBuilder {
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
             transaction_state: self.transaction_state,
+            transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             db_cache: self.db_cache,
         })
@@ -136,6 +148,7 @@ pub struct PendingBlocks {
     transaction_receipts: HashMap<B256, TransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
+    transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
@@ -148,6 +161,10 @@ impl PendingBlocks {
 
     pub fn canonical_block_number(&self) -> BlockNumberOrTag {
         BlockNumberOrTag::Number(self.headers.first().unwrap().number - 1)
+    }
+
+    pub fn earliest_block_number(&self) -> BlockNumber {
+        self.headers.first().unwrap().number
     }
 
     pub fn latest_flashblock_index(&self) -> u64 {
@@ -164,6 +181,10 @@ impl PendingBlocks {
 
     pub fn get_transaction_state(&self, hash: B256) -> Option<EvmState> {
         self.transaction_state.get(&hash).cloned()
+    }
+
+    pub fn get_transaction_sender(&self, tx_hash: &B256) -> Option<Address> {
+        self.transaction_senders.get(tx_hash).cloned()
     }
 
     pub fn get_db_cache(&self) -> Cache {
@@ -186,8 +207,7 @@ impl PendingBlocks {
         let transactions = if full {
             BlockTransactions::Full(block_transactions)
         } else {
-            let tx_hashes: Vec<B256> =
-                block_transactions.iter().map(|tx| tx.tx_hash()).collect();
+            let tx_hashes: Vec<B256> = block_transactions.iter().map(|tx| tx.tx_hash()).collect();
             BlockTransactions::Hashes(tx_hashes.clone())
         };
 
@@ -195,6 +215,7 @@ impl PendingBlocks {
             header: RPCHeader::from_consensus(header.clone(), None, None),
             transactions,
             uncles: Vec::new(),
+            // TODO
             withdrawals: None,
         }
     }
@@ -232,5 +253,42 @@ impl PendingBlocks {
         }
 
         logs
+    }
+}
+
+impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
+    fn get_canonical_block_number(&self) -> BlockNumberOrTag {
+        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
+    }
+
+    fn get_transaction_count(&self, address: Address) -> U256 {
+        self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
+    }
+
+    fn get_block(&self, full: bool) -> Option<RpcBlock<Ethereum>> {
+        self.as_ref().map(|pb| pb.get_latest_block(full))
+    }
+
+    fn get_transaction_receipt(
+        &self,
+        tx_hash: alloy_primitives::TxHash,
+    ) -> Option<RpcReceipt<Ethereum>> {
+        self.as_ref().and_then(|pb| pb.get_receipt(tx_hash))
+    }
+
+    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Ethereum>> {
+        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
+    }
+
+    fn get_balance(&self, address: Address) -> Option<U256> {
+        self.as_ref().and_then(|pb| pb.get_balance(address))
+    }
+
+    fn get_state_overrides(&self) -> Option<StateOverride> {
+        self.as_ref().map(|pb| pb.get_state_overrides()).unwrap_or_default()
+    }
+
+    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
+        self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
     }
 }

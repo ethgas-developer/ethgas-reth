@@ -2,7 +2,7 @@ use crate::{
     metrics::Metrics,
     payload::FlashBlock,
     pending::{PendingBlocks, PendingBlocksBuilder},
-    rpc::{FlashblocksAPI, PendingBlocksAPI},
+    rpc::FlashblocksAPI,
     service::FlashblocksReceiver,
 };
 use alloy_consensus::{
@@ -10,14 +10,13 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::BlockNumberOrTag;
-use alloy_network::{Ethereum, TransactionResponse};
+use alloy_network::TransactionResponse;
 use alloy_primitives::{
-    Address, B256, BlockNumber, Bytes, Sealable, TxHash, U256,
-    map::{B256HashMap, foldhash::HashMap},
+    B256, BlockNumber, Bytes, Sealable,
+    map::foldhash::HashMap,
 };
-use alloy_rpc_types::{Filter, Log, TransactionTrait, Withdrawal};
+use alloy_rpc_types::{TransactionTrait, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
 use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
 use reth::{
@@ -34,8 +33,7 @@ use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_primitives::{EthPrimitives, EthereumHardforks};
 use reth_primitives_traits::RecoveredBlock;
-use reth_rpc_convert::{RpcTransaction, transaction::ConvertReceiptInput};
-use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,
@@ -84,12 +82,7 @@ where
             flashblock_sender.clone(),
         );
 
-        Self {
-            pending_blocks,
-            flashblock_sender,
-            queue: tx,
-            state_processor,
-        }
+        Self { pending_blocks, flashblock_sender, queue: tx, state_processor }
     }
 
     pub fn start(&self) {
@@ -138,43 +131,6 @@ impl<Client> FlashblocksAPI for FlashblocksState<Client> {
 
     fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>> {
         self.pending_blocks.load()
-    }
-}
-
-impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
-    fn get_canonical_block_number(&self) -> BlockNumberOrTag {
-        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
-    }
-
-    fn get_transaction_count(&self, address: Address) -> U256 {
-        self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
-    }
-
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Ethereum>> {
-        self.as_ref().map(|pb| pb.get_latest_block(full))
-    }
-
-    fn get_transaction_receipt(
-        &self,
-        tx_hash: alloy_primitives::TxHash,
-    ) -> Option<RpcReceipt<Ethereum>> {
-        self.as_ref().and_then(|pb| pb.get_receipt(tx_hash))
-    }
-
-    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Ethereum>> {
-        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
-    }
-
-    fn get_balance(&self, address: Address) -> Option<U256> {
-        self.as_ref().and_then(|pb| pb.get_balance(address))
-    }
-
-    fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.as_ref().map(|pb| pb.get_state_overrides()).unwrap_or_default()
-    }
-
-    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
-        self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
     }
 }
 
@@ -388,7 +344,6 @@ where
         ))?;
 
         let evm_config = EthEvmConfig::ethereum(self.chain_spec.clone());
-
         let state_provider =
             self.client.state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
@@ -399,14 +354,13 @@ where
             Some(pending_blocks) => CacheDB { cache: pending_blocks.get_db_cache(), db: state },
             None => CacheDB::new(state),
         };
-        let mut state_cache_builder = match &prev_pending_blocks {
-            Some(pending_blocks) => {
-                StateOverridesBuilder::new(pending_blocks.get_state_overrides().unwrap_or_default())
-            }
-            None => StateOverridesBuilder::default(),
+
+        let mut state_overrides = match &prev_pending_blocks {
+            Some(pending_blocks) => pending_blocks.get_state_overrides().unwrap_or_default(),
+            None => StateOverride::default(),
         };
+
         for (_block_number, flashblocks) in flashblocks_per_block {
-            let nested_db = db.nest();
             let base = flashblocks
                 .first()
                 .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
@@ -445,10 +399,14 @@ where
                     acc
                 });
 
-            pending_blocks_builder.with_flashblocks(flashblocks.clone());
+            pending_blocks_builder.with_flashblocks(
+                flashblocks.iter().map(|x| x.clone()).collect::<Vec<FlashBlock>>(),
+            );
 
             let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
+                // TODO
                 blob_gas_used: 0,
+                // TODO
                 excess_blob_gas: 0,
                 payload_inner: ExecutionPayloadV2 {
                     withdrawals,
@@ -486,7 +444,7 @@ where
             };
 
             let evm_env = evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
-            let mut evm = evm_config.evm_with_env(nested_db, evm_env);
+            let mut evm = evm_config.evm_with_env(db, evm_env);
 
             let mut gas_used = 0;
             let mut next_log_index = 0;
@@ -496,6 +454,8 @@ where
                     Ok(signer) => signer,
                     Err(err) => return Err(err.into()),
                 };
+                let tx_hash = transaction.tx_hash();
+                pending_blocks_builder.with_transaction_sender(*tx_hash, sender);
                 pending_blocks_builder.increment_nonce(sender);
 
                 let receipt = receipt_by_hash
@@ -535,64 +495,69 @@ where
                     timestamp: block.timestamp,
                 };
 
-                let input: ConvertReceiptInput<'_, EthPrimitives> = ConvertReceiptInput {
-                    receipt: receipt.clone(),
-                    tx: Recovered::new_unchecked(transaction, sender),
-                    gas_used: receipt.cumulative_gas_used() - gas_used,
-                    next_log_index,
-                    meta,
-                };
+                let eth_receipt = prev_pending_blocks
+                    .as_ref()
+                    .and_then(|pending_blocks| pending_blocks.get_receipt(*tx_hash))
+                    .unwrap_or_else(|| {
+                        let input: ConvertReceiptInput<'_, EthPrimitives> = ConvertReceiptInput {
+                            receipt: receipt.clone(),
+                            tx: Recovered::new_unchecked(transaction, sender),
+                            gas_used: receipt.cumulative_gas_used() - gas_used,
+                            next_log_index,
+                            meta,
+                        };
 
-                let blob_params =
-                    self.client.chain_spec().blob_params_at_timestamp(input.meta.timestamp);
-                let eth_receipt = build_receipt(input, blob_params, |receipt, next_log_index, meta| {
-                    receipt.into_rpc(next_log_index, meta).into()
-                });
+                        let blob_params =
+                            self.client.chain_spec().blob_params_at_timestamp(input.meta.timestamp);
+
+                        build_receipt(input, blob_params, |receipt, next_log_index, meta| {
+                            receipt.into_rpc(next_log_index, meta).into()
+                        })
+                    });
 
                 pending_blocks_builder.with_receipt(*transaction.tx_hash(), eth_receipt);
-
                 gas_used = receipt.cumulative_gas_used();
                 next_log_index += receipt.logs().len();
 
                 let mut should_execute_transaction = false;
-                match &prev_pending_blocks {
-                    Some(pending_blocks) => {
-                        match pending_blocks.get_transaction_state(*transaction.tx_hash()) {
-                            Some(state) => {
-                                pending_blocks_builder
-                                    .with_transaction_state(*transaction.tx_hash(), state);
-                            }
-                            None => {
-                                should_execute_transaction = true;
-                            }
-                        }
-                    }
-                    None => {
-                        should_execute_transaction = true;
-                    }
+                if let Some(state) =
+                    prev_pending_blocks.as_ref().and_then(|p| p.get_transaction_state(*tx_hash))
+                {
+                    pending_blocks_builder.with_transaction_state(*tx_hash, state);
+                    should_execute_transaction = false;
                 }
 
                 if should_execute_transaction {
-                    let ResultAndState { state, .. } = evm.transact(recovered_transaction)?;
-                    for (addr, acc) in &state {
-                        let state_diff = B256HashMap::<B256>::from_iter(
-                            acc.storage
-                                .iter()
-                                .map(|(&key, slot)| (key.into(), slot.present_value.into())),
-                        );
-                        let acc_override = AccountOverride {
-                            balance: Some(acc.info.balance),
-                            nonce: Some(acc.info.nonce),
-                            code: acc.info.code.clone().map(|code| code.bytes()),
-                            state: None,
-                            state_diff: Some(state_diff),
-                            move_precompile_to: None,
-                        };
-                        state_cache_builder = state_cache_builder.append(*addr, acc_override);
+                    match evm.transact(recovered_transaction) {
+                        Ok(ResultAndState { state, .. }) => {
+                            for (addr, acc) in &state {
+                                let existing_override =
+                                    state_overrides.entry(*addr).or_insert(Default::default());
+                                existing_override.balance = Some(acc.info.balance);
+                                existing_override.nonce = Some(acc.info.nonce);
+                                existing_override.code =
+                                    acc.info.code.clone().map(|code| code.bytes());
+
+                                let existing =
+                                    existing_override.state_diff.get_or_insert(Default::default());
+                                let changed_slots = acc.storage.iter().map(|(&key, slot)| {
+                                    (B256::from(key), B256::from(slot.present_value))
+                                });
+
+                                existing.extend(changed_slots);
+                            }
+                            pending_blocks_builder.with_transaction_state(*tx_hash, state.clone());
+                            evm.db_mut().commit(state);
+                        }
+                        Err(e) => {
+                            return Err(eyre!(
+                                "failed to execute transaction: {:?} tx_hash: {:?} sender: {:?}",
+                                e,
+                                tx_hash,
+                                sender
+                            ));
+                        }
                     }
-                    pending_blocks_builder
-                        .with_transaction_state(*transaction.tx_hash(), state.clone());
-                    evm.db_mut().commit(state);
                 }
             }
 
@@ -600,12 +565,12 @@ where
                 pending_blocks_builder.with_account_balance(address, balance);
             }
 
-            db = evm.into_db().flatten();
+            db = evm.into_db();
             last_block_header = block.header.clone();
         }
 
         pending_blocks_builder.with_db_cache(db.cache);
-        pending_blocks_builder.with_state_overrides(state_cache_builder.build());
+        pending_blocks_builder.with_state_overrides(state_overrides);
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }
 

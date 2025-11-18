@@ -86,7 +86,7 @@ where
                                         Ok(Message::Text(text)) => {
                                             match try_decode_plaintext_message(&text) {
                                                 Ok(payload) => {
-                                                    debug!(message = "Successfully decoded plaintext flashblock", payload_id = %payload.payload_id, index = payload.index);
+                                                    // debug!(message = "Successfully decoded plaintext flashblock", payload_id = %payload.payload_id, index = payload.index);
                                                     let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
                                                         error!(message = "Failed to publish message to channel", error = %e);
                                                     });

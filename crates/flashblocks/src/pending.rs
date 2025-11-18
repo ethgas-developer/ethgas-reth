@@ -78,9 +78,7 @@ impl PendingBlocksBuilder {
 
     #[inline]
     pub(crate) fn increment_nonce(&mut self, sender: Address) -> &Self {
-        let zero = U256::from(0);
-        let current_count = self.transaction_count.get(&sender).unwrap_or(&zero);
-
+        let current_count = self.transaction_count.get(&sender).unwrap_or(&U256::ZERO);
         _ = self.transaction_count.insert(sender, *current_count + U256::from(1));
         self
     }

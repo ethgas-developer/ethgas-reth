@@ -11,10 +11,7 @@ use alloy_consensus::{
 };
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::TransactionResponse;
-use alloy_primitives::{
-    B256, BlockNumber, Bytes, Sealable,
-    map::foldhash::HashMap,
-};
+use alloy_primitives::{B256, BlockNumber, Bytes, Sealable, map::foldhash::HashMap};
 use alloy_rpc_types::{TransactionTrait, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use arc_swap::{ArcSwapOption, Guard};
@@ -193,6 +190,11 @@ where
 
                             self.pending_blocks.swap(new_pending_blocks);
                             self.metrics.block_processing_duration.record(start_time.elapsed());
+                            debug!(
+                                message = "successfully processed flashblock",
+                                block_number = flashblock.metadata.block_number,
+                                flashblock_index = flashblock.index
+                            );
                         }
                         Err(e) => {
                             error!(message = "could not process Flashblock", error = %e);

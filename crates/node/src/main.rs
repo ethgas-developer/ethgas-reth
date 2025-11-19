@@ -6,7 +6,7 @@ use ethgas_flashblocks::{
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth::{
-    chainspec::{ChainSpecBuilder, EthereumChainSpecParser},
+    chainspec::{ChainSpecProvider, EthereumChainSpecParser},
     cli::Cli, version::{RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata},
 };
 use reth_exex::ExExEvent;
@@ -67,8 +67,6 @@ fn main() {
             debug!("Flashblocks enabled: {}", flashblocks_enabled);
             let node = EthereumNode::default();
 
-            let chain_spec = Arc::new(ChainSpecBuilder::mainnet().prague_activated().build());
-
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
             let handle = builder
@@ -78,11 +76,12 @@ fn main() {
                 .on_component_initialized(move |_ctx| Ok(()))
                 .install_exex_if(flashblocks_enabled, "flashblocks-canon", {
                     let fb_cell = fb_cell.clone();
-                    let chain_spec = chain_spec.clone();
                     move |mut ctx| async move {
+                        let provider = ctx.provider().clone();
+                        let chain_spec = provider.chain_spec();
                         let fb = fb_cell
                             .get_or_init(|| {
-                                Arc::new(FlashblocksState::new(ctx.provider().clone(), chain_spec))
+                                Arc::new(FlashblocksState::new(provider, chain_spec))
                             })
                             .clone();
 
@@ -112,11 +111,13 @@ fn main() {
                                 .as_str(),
                         )?;
 
+                        let provider = ctx.provider().clone();
+                        let chain_spec = provider.chain_spec();
                         let fb = fb_cell
                             .get_or_init(|| {
                                 Arc::new(FlashblocksState::new(
-                                    ctx.provider().clone(),
-                                    chain_spec.clone(),
+                                    provider,
+                                    chain_spec,
                                 ))
                             })
                             .clone();

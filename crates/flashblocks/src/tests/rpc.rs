@@ -228,7 +228,7 @@ mod tests {
                         Receipt {
                             tx_type: TxType::Eip1559,
                             success: true.into(),
-                            cumulative_gas_used: 24000,
+                            cumulative_gas_used: 21000,
                             logs: vec![],
                         },
                     );
@@ -245,41 +245,25 @@ mod tests {
     const TX_SENDER: Address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
 
     const TRANSFER_ETH_HASH: TxHash =
-        b256!("0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a");
+        b256!("0x706bbbf402a4f55831d250c77be8f368e16d9b63df9d58561cea8d1f2b59030b");
 
     const DEPLOYMENT_HASH: TxHash =
-        b256!("0xa9353897b4ab350ae717eefdad4c9cb613e684f5a490c82a44387d8d5a2f8197");
+        b256!("0x3ac6609d8e9652278e5394666a182ed4924cef5c1761dd918c7d2d931f32f510");
 
     const INCREMENT_HASH: TxHash =
-        b256!("0x993ad6a332752f6748636ce899b3791e4a33f7eece82c0db4556c7339c1b2929");
+        b256!("0xca0f9103ec4360c1a2ac62537bd2ab1ff1284bc7a480100286443f3a3662ee3f");
 
     const COUNTER_ADDRESS: Address = address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512");
-
-    // NOTE:
-    // To create tx use cast mktx/
-    // Example: `cast mktx --private-key
-    // 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --nonce 1 --gas-limit
-    // 100000 --gas-price 1499576 --chain 84532 --value 0 --priority-gas-price 0
-    // 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 0x` Create second payload (index 1) with
-    // transactions tx1 hash: 0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548
-    // (deposit transaction)
-    // tx2 hash: 0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a
     const TRANSFER_ETH_TX: Bytes = bytes!(
-        "0x02f87383014a3480808449504f80830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018ad3c21bcb3f6efc39800080c0019f5a6fe2065583f4f3730e82e5725f651cbbaf11dc1f82c8d29ba1f3f99e5383a061e0bf5dfff4a9bc521ad426eee593d3653c5c330ae8a65fad3175d30f291d31"
+        "0x02f86b0180806482520894deadbeefdeadbeefdeadbeefdeadbeefdeadbeef8902b5e3af16b188000080c001a0c18767bf03c514933cfec05f2c9a354bf4e8eaafe2e4e7c86836bfc0fb62ad42a02b291b32c588337b7b45420076433157a440bb97afebb154988986527a6ef535"
     );
 
-    // NOTE:
-    // Following txns deploy a simple Counter contract (Compiled with solc 0.8.13)
-    // Only contains a `uin256 public number` and a function increment() { number++ };
-    // Following txn calls increment once, so number should be 1
-    // Raw Bytecode:
-    // 0x608060405234801561001057600080fd5b50610163806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80638381f58a1461003b578063d09de08a14610059575b600080fd5b610043610063565b604051610050919061009b565b60405180910390f35b610061610069565b005b60005481565b60008081548092919061007b906100e5565b9190505550565b6000819050919050565b61009581610082565b82525050565b60006020820190506100b0600083018461008c565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100f082610082565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8203610122576101216100b6565b5b60018201905091905056fea2646970667358221220a0719cefc3439563ff433fc58f8ffb66e1b639119206276d3bdac5d2e2b6f2fa64736f6c634300080d0033
-    const DEPLOYMENT_TX: Bytes = bytes!(
-        "0x02f901db83014a3401808449504f8083030d408080b90183608060405234801561001057600080fd5b50610163806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80638381f58a1461003b578063d09de08a14610059575b600080fd5b610043610063565b604051610050919061009b565b60405180910390f35b610061610069565b005b60005481565b60008081548092919061007b906100e5565b9190505550565b6000819050919050565b61009581610082565b82525050565b60006020820190506100b0600083018461008c565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100f082610082565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8203610122576101216100b6565b5b60018201905091905056fea2646970667358221220a0719cefc3439563ff433fc58f8ffb66e1b639119206276d3bdac5d2e2b6f2fa64736f6c634300080d0033c080a034278436b367f7b73ab6dc7c7cc09f8880104513f8b8fb691b498257de97a5bca05cb702ebad2aadf9f225bf5f8685ea03d194bf7a2ea05b1d27a1bd33169f9fe0"
+   const DEPLOYMENT_TX: Bytes = bytes!(
+        "0x02f901d40101806483030d408080b90183608060405234801561001057600080fd5b50610163806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80638381f58a1461003b578063d09de08a14610059575b600080fd5b610043610063565b604051610050919061009b565b60405180910390f35b610061610069565b005b60005481565b60008081548092919061007b906100e5565b9190505550565b6000819050919050565b61009581610082565b82525050565b60006020820190506100b0600083018461008c565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100f082610082565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8203610122576101216100b6565b5b60018201905091905056fea2646970667358221220a0719cefc3439563ff433fc58f8ffb66e1b639119206276d3bdac5d2e2b6f2fa64736f6c634300080d0033c001a0dca16ec17433365375a650fc828eeb9c68709ff06e2c420353b918e6b0f6045da0017a6c4c722204daedefe12bdbf17834112a33086c768f30a50905d151cef7e8"
     );
     // Increment tx: call increment()
     const INCREMENT_TX: Bytes = bytes!(
-        "0x02f86d83014a3402808449504f8082abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084d09de08ac080a0a9c1a565668084d4052bbd9bc3abce8555a06aed6651c82c2756ac8a83a79fa2a03427f440ce4910a5227ea0cedb60b06cf0bea2dbbac93bd37efa91a474c29d89"
+        "0x02f8660102806482abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084d09de08ac080a08d498dd9cd95ed80304f9d3a11c547f205ae2e3de5ebe1db0781914acb090654a0092a947f344f3e66e5ae06bd61bb5b7cf8288b775d6c433f3189607788465e1d"
     );
 
     fn create_second_payload() -> FlashBlock {
@@ -429,7 +413,7 @@ mod tests {
             "receipt
     expected",
         );
-        assert_eq!(receipt.gas_used, 24000); // 45000 - 21000
+        assert_eq!(receipt.gas_used, 21000);
 
         // TODO: Add a new payload and validate that the receipts from the previous payload
         // are not returned.
@@ -466,7 +450,7 @@ mod tests {
             .gas_limit(200000)
             .nonce(1)
             .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
-            .value(U256::from(9999999999849942300000u128))
+            .value(U256::from_str("999999000000000000000000").unwrap()) // 999,999 ETH (less than 1M)
             .input(TransactionInput::new(bytes!("0x")));
 
         let res =
@@ -515,13 +499,13 @@ mod tests {
         let tx_hash = tx_env.hash().clone();
         let raw_tx: Bytes = tx_env.encoded_2718().into();
 
-        node.send_payload(create_first_payload_()).await?;
+        let payload_with_tx = create_first_payload(tx_hash, raw_tx.clone());
 
         // run the Tx sync and, in parallel, deliver the payload that contains the Tx
         let (receipt_result, payload_result) =
             tokio::join!(node.send_raw_transaction_sync(raw_tx, None), async {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                node.send_payload(create_second_payload()).await
+                node.send_payload(payload_with_tx).await
             });
 
         payload_result?;

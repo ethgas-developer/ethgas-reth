@@ -9,7 +9,7 @@ use crate::{
 };
 use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info, trace, warn};
 
 /// Interval of liveness check of upstream, in milliseconds.
 pub const PING_INTERVAL_MS: u64 = 500;

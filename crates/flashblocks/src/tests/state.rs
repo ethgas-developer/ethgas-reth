@@ -24,7 +24,7 @@ mod tests {
     use alloy_rpc_types_engine::PayloadId;
     use reth::{
         builder::NodeTypesWithDBAdapter,
-        chainspec::{Chain, ChainSpecBuilder, EthChainSpec, MAINNET},
+        chainspec::{Chain, ChainSpec, ChainSpecBuilder, EthChainSpec, MAINNET},
         providers::{AccountReader, BlockNumReader, BlockReader},
         revm::database::StateProviderDatabase,
         transaction_pool::test_utils::TransactionBuilder,
@@ -46,10 +46,10 @@ mod tests {
     use tokio::time::sleep;
 
     const TRANSFER_ETH_HASH: TxHash =
-        b256!("0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a");
+        b256!("0x706bbbf402a4f55831d250c77be8f368e16d9b63df9d58561cea8d1f2b59030b");
 
     const TRANSFER_ETH_TX: Bytes = bytes!(
-        "0x02f87383014a3480808449504f80830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018ad3c21bcb3f6efc39800080c0019f5a6fe2065583f4f3730e82e5725f651cbbaf11dc1f82c8d29ba1f3f99e5383a061e0bf5dfff4a9bc521ad426eee593d3653c5c330ae8a65fad3175d30f291d31"
+        "0x02f86b0180806482520894deadbeefdeadbeefdeadbeefdeadbeefdeadbeef8902b5e3af16b188000080c001a0c18767bf03c514933cfec05f2c9a354bf4e8eaafe2e4e7c86836bfc0fb62ad42a02b291b32c588337b7b45420076433157a440bb97afebb154988986527a6ef535"
     );
 
     // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical
@@ -245,14 +245,8 @@ mod tests {
 
             let genesis: Genesis =
                 serde_json::from_str(include_str!("assets/genesis.json")).unwrap();
-            let chain_spec = Arc::new(
-                ChainSpecBuilder::default()
-                    .chain(MAINNET.chain)
-                    .genesis(genesis)
-                    .prague_activated()
-                    .build(),
-            );
-            let factory = create_test_provider_factory::<EthereumNode>(chain_spec.clone());
+            let chainspec = Arc::new(ChainSpec::from_genesis(genesis));
+            let factory = create_test_provider_factory::<EthereumNode>(chainspec.clone());
             assert!(reth_db_common::init::init_genesis(&factory).is_ok());
 
             let provider =
@@ -265,7 +259,7 @@ mod tests {
                 .try_into_recovered()
                 .expect("able to recover block");
 
-            let flashblocks = FlashblocksState::new(provider.clone(), chain_spec.clone());
+            let flashblocks = FlashblocksState::new(provider.clone(), chainspec.clone());
             flashblocks.start();
 
             flashblocks.on_canonical_block_received(&block);
@@ -312,7 +306,7 @@ mod tests {
                         Receipt {
                             tx_type: TxType::Eip1559,
                             success: true,
-                            cumulative_gas_used: 24000,
+                            cumulative_gas_used: 21000,
                             logs: vec![],
                         },
                     );
@@ -763,7 +757,8 @@ mod tests {
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
-        let current_block = test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
+        let current_block =
+            test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
 
         assert_eq!(current_block.header().number, 1);
         assert_eq!(current_block.transactions.len(), 1);
@@ -784,7 +779,8 @@ mod tests {
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
-        let current_block = test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
+        let current_block =
+            test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
 
         assert_eq!(current_block.header().number, 1);
         assert_eq!(current_block.transactions.len(), 1);
@@ -794,7 +790,8 @@ mod tests {
         )
         .await;
 
-        let current_block = test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
+        let current_block =
+            test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
 
         assert_eq!(current_block.header().number, 2);
         assert_eq!(current_block.transactions.len(), 1);
@@ -810,7 +807,15 @@ mod tests {
         test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
         // Just the block info transaction
-        assert_eq!(test.flashblocks.get_pending_blocks().get_block(true).expect("should be set").transactions.len(), 1);
+        assert_eq!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .expect("should be set")
+                .transactions
+                .len(),
+            1
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 3)

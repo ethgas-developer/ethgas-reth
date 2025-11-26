@@ -2,7 +2,7 @@ use crate::{
     metrics::Metrics,
     payload::FlashBlock,
     pending::{PendingBlocks, PendingBlocksBuilder},
-    rpc::{FlashblocksAPI, PendingBlocksAPI},
+    rpc::FlashblocksAPI,
     service::FlashblocksReceiver,
 };
 use alloy_consensus::{
@@ -10,14 +10,14 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::BlockNumberOrTag;
-use alloy_network::{Ethereum, TransactionResponse};
+use alloy_network::TransactionResponse;
 use alloy_primitives::{
-    Address, B256, BlockNumber, Bytes, Sealable, TxHash, U256,
+    B256, BlockNumber, Bytes, Sealable,
     map::{B256HashMap, foldhash::HashMap},
 };
-use alloy_rpc_types::{Filter, Log, TransactionTrait, Withdrawal};
+use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
+use alloy_rpc_types_eth::state::{AccountOverride, StateOverridesBuilder};
 use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
 use reth::{
@@ -34,8 +34,7 @@ use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_primitives::{EthPrimitives, EthereumHardforks};
 use reth_primitives_traits::RecoveredBlock;
-use reth_rpc_convert::{RpcTransaction, transaction::ConvertReceiptInput};
-use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,
@@ -84,12 +83,7 @@ where
             flashblock_sender.clone(),
         );
 
-        Self {
-            pending_blocks,
-            flashblock_sender,
-            queue: tx,
-            state_processor,
-        }
+        Self { pending_blocks, flashblock_sender, queue: tx, state_processor }
     }
 
     pub fn start(&self) {
@@ -138,43 +132,6 @@ impl<Client> FlashblocksAPI for FlashblocksState<Client> {
 
     fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>> {
         self.pending_blocks.load()
-    }
-}
-
-impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
-    fn get_canonical_block_number(&self) -> BlockNumberOrTag {
-        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
-    }
-
-    fn get_transaction_count(&self, address: Address) -> U256 {
-        self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
-    }
-
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Ethereum>> {
-        self.as_ref().map(|pb| pb.get_latest_block(full))
-    }
-
-    fn get_transaction_receipt(
-        &self,
-        tx_hash: alloy_primitives::TxHash,
-    ) -> Option<RpcReceipt<Ethereum>> {
-        self.as_ref().and_then(|pb| pb.get_receipt(tx_hash))
-    }
-
-    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Ethereum>> {
-        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
-    }
-
-    fn get_balance(&self, address: Address) -> Option<U256> {
-        self.as_ref().and_then(|pb| pb.get_balance(address))
-    }
-
-    fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.as_ref().map(|pb| pb.get_state_overrides()).unwrap_or_default()
-    }
-
-    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
-        self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
     }
 }
 
@@ -550,9 +507,10 @@ where
 
                 let blob_params =
                     self.client.chain_spec().blob_params_at_timestamp(input.meta.timestamp);
-                let eth_receipt = build_receipt(input, blob_params, |receipt, next_log_index, meta| {
-                    receipt.into_rpc(next_log_index, meta).into()
-                });
+                let eth_receipt =
+                    build_receipt(input, blob_params, |receipt, next_log_index, meta| {
+                        receipt.into_rpc(next_log_index, meta).into()
+                    });
 
                 pending_blocks_builder.with_receipt(*transaction.tx_hash(), eth_receipt);
 

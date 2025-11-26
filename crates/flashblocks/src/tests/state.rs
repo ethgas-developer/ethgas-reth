@@ -259,7 +259,7 @@ mod tests {
                 .try_into_recovered()
                 .expect("able to recover block");
 
-            let flashblocks = FlashblocksState::new(provider.clone(), chainspec.clone());
+            let flashblocks = FlashblocksState::new(provider.clone(), chainspec.clone(), 5);
             flashblocks.start();
 
             flashblocks.on_canonical_block_received(&block);

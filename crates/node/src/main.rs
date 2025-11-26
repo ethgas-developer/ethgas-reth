@@ -6,8 +6,10 @@ use ethgas_flashblocks::{
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth::{
+    builder::NodeHandle,
     chainspec::{ChainSpecProvider, EthereumChainSpecParser},
-    cli::Cli, version::{RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata},
+    cli::Cli,
+    version::{RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata},
 };
 use reth_exex::ExExEvent;
 use reth_node_ethereum::EthereumNode;
@@ -30,6 +32,13 @@ pub const NODE_RETH_CLIENT_VERSION: &str = concat!("ethgas-reth/v", env!("CARGO_
 struct FlashblocksArgs {
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
     pub websocket_url: Option<String>,
+
+    #[arg(
+        long = "max-pending-blocks-depth",
+        value_name = "MAX_PENDING_BLOCKS_DEPTH",
+        default_value = "3"
+    )]
+    pub max_pending_blocks_depth: u64,
 }
 
 impl FlashblocksArgs {
@@ -69,7 +78,7 @@ fn main() {
 
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
-            let handle = builder
+            let NodeHandle { node: _node, node_exit_future } = builder
                 .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
                 .with_components(node.components_builder())
                 .with_add_ons(node.add_ons())
@@ -81,7 +90,11 @@ fn main() {
                         let chain_spec = provider.chain_spec();
                         let fb = fb_cell
                             .get_or_init(|| {
-                                Arc::new(FlashblocksState::new(provider, chain_spec))
+                                Arc::new(FlashblocksState::new(
+                                    provider,
+                                    chain_spec,
+                                    flashblocks_args.max_pending_blocks_depth,
+                                ))
                             })
                             .clone();
 
@@ -102,7 +115,7 @@ fn main() {
                 })
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
-                        info!(message = "Starting Flashblocks");
+                        info!(message = "Starting Flashblocks RPC");
 
                         let ws_url = Url::parse(
                             flashblocks_args
@@ -118,6 +131,7 @@ fn main() {
                                 Arc::new(FlashblocksState::new(
                                     provider,
                                     chain_spec,
+                                    flashblocks_args.max_pending_blocks_depth,
                                 ))
                             })
                             .clone();
@@ -154,7 +168,7 @@ fn main() {
                 })
                 .await?;
 
-            handle.wait_for_node_exit().await
+            node_exit_future.await
         })
         .unwrap();
 }

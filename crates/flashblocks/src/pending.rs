@@ -27,6 +27,7 @@ pub struct PendingBlocksBuilder {
     transaction_receipts: HashMap<B256, TransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
+    transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
@@ -43,7 +44,7 @@ impl PendingBlocksBuilder {
             transaction_receipts: HashMap::new(),
             transactions_by_hash: HashMap::new(),
             transaction_state: HashMap::new(),
-
+            transaction_senders: HashMap::new(),
             state_overrides: None,
             db_cache: Cache::default(),
         }
@@ -71,6 +72,12 @@ impl PendingBlocksBuilder {
     #[inline]
     pub(crate) fn with_transaction_state(&mut self, hash: B256, state: EvmState) -> &Self {
         self.transaction_state.insert(hash, state);
+        self
+    }
+
+    #[inline]
+    pub(crate) fn with_transaction_sender(&mut self, hash: B256, sender: Address) -> &Self {
+        self.transaction_senders.insert(hash, sender);
         self
     }
 
@@ -123,6 +130,7 @@ impl PendingBlocksBuilder {
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
             transaction_state: self.transaction_state,
+            transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             db_cache: self.db_cache,
         })
@@ -140,6 +148,7 @@ pub struct PendingBlocks {
     transaction_receipts: HashMap<B256, TransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
+    transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
@@ -151,7 +160,13 @@ impl PendingBlocks {
     }
 
     pub fn canonical_block_number(&self) -> BlockNumberOrTag {
+        // The first header is for the first pending block we are tracking, so the one before it is
+        // the Canon state all the pending state is built on top of
         BlockNumberOrTag::Number(self.headers.first().unwrap().number - 1)
+    }
+
+    pub fn earliest_block_number(&self) -> BlockNumber {
+        self.headers.first().unwrap().number
     }
 
     pub fn latest_flashblock_index(&self) -> u64 {
@@ -170,6 +185,10 @@ impl PendingBlocks {
         self.transaction_state.get(&hash).cloned()
     }
 
+    pub fn get_transaction_sender(&self, tx_hash: &B256) -> Option<Address> {
+        self.transaction_senders.get(tx_hash).cloned()
+    }
+
     pub fn get_db_cache(&self) -> Cache {
         self.db_cache.clone()
     }
@@ -177,7 +196,7 @@ impl PendingBlocks {
     pub fn get_transactions_for_block(&self, block_number: BlockNumber) -> Vec<Transaction> {
         self.transactions
             .iter()
-            .filter(|tx| tx.block_number.unwrap_or(0) == block_number)
+            .filter(|tx| tx.block_number.unwrap() == block_number)
             .cloned()
             .collect()
     }
@@ -187,7 +206,7 @@ impl PendingBlocks {
         let block_number = header.number;
         let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
 
-        let transactions = if full {
+        let transactions: BlockTransactions<Transaction> = if full {
             BlockTransactions::Full(block_transactions)
         } else {
             let tx_hashes: Vec<B256> = block_transactions.iter().map(|tx| tx.tx_hash()).collect();
@@ -198,6 +217,7 @@ impl PendingBlocks {
             header: RPCHeader::from_consensus(header.clone(), None, None),
             transactions,
             uncles: Vec::new(),
+            // TODO
             withdrawals: None,
         }
     }

@@ -77,6 +77,12 @@ impl PendingBlocksBuilder {
     }
 
     #[inline]
+    pub(crate) fn with_transaction_sender(&mut self, hash: B256, sender: Address) -> &Self {
+        self.transaction_senders.insert(hash, sender);
+        self
+    }
+
+    #[inline]
     pub(crate) fn with_db_cache(&mut self, cache: Cache) -> &Self {
         self.db_cache = cache;
         self
@@ -104,12 +110,6 @@ impl PendingBlocksBuilder {
     #[inline]
     pub(crate) fn with_state_overrides(&mut self, state_overrides: StateOverride) -> &Self {
         self.state_overrides = Some(state_overrides);
-        self
-    }
-
-    #[inline]
-    pub(crate) fn with_transaction_sender(&mut self, hash: B256, sender: Address) -> &Self {
-        self.transaction_senders.insert(hash, sender);
         self
     }
 
@@ -161,10 +161,11 @@ impl PendingBlocks {
     }
 
     pub fn canonical_block_number(&self) -> BlockNumberOrTag {
+        // The first header is for the first pending block we are tracking, so the one before it is
+        // the Canon state all the pending state is built on top of
         BlockNumberOrTag::Number(self.headers.first().unwrap().number - 1)
     }
 
-    /// Returns the earliest block number in the pending state.
     pub fn earliest_block_number(&self) -> BlockNumber {
         self.headers.first().unwrap().number
     }
@@ -185,6 +186,10 @@ impl PendingBlocks {
         self.transaction_state.get(&hash).cloned()
     }
 
+    pub fn get_transaction_sender(&self, tx_hash: &B256) -> Option<Address> {
+        self.transaction_senders.get(tx_hash).cloned()
+    }
+
     pub fn get_db_cache(&self) -> Cache {
         self.db_cache.clone()
     }
@@ -192,13 +197,9 @@ impl PendingBlocks {
     pub fn get_transactions_for_block(&self, block_number: BlockNumber) -> Vec<Transaction> {
         self.transactions
             .iter()
-            .filter(|tx| tx.block_number.unwrap_or(0) == block_number)
+            .filter(|tx| tx.block_number.unwrap() == block_number)
             .cloned()
             .collect()
-    }
-
-    pub fn get_transaction_sender(&self, tx_hash: &B256) -> Option<Address> {
-        self.transaction_senders.get(tx_hash).cloned()
     }
 
     pub fn get_latest_block(&self, full: bool) -> RpcBlock<Ethereum> {
@@ -206,7 +207,7 @@ impl PendingBlocks {
         let block_number = header.number;
         let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
 
-        let transactions = if full {
+        let transactions: BlockTransactions<Transaction> = if full {
             BlockTransactions::Full(block_transactions)
         } else {
             let tx_hashes: Vec<B256> = block_transactions.iter().map(|tx| tx.tx_hash()).collect();
@@ -217,6 +218,7 @@ impl PendingBlocks {
             header: RPCHeader::from_consensus(header.clone(), None, None),
             transactions,
             uncles: Vec::new(),
+            // TODO
             withdrawals: None,
         }
     }

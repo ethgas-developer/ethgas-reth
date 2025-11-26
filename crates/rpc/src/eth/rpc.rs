@@ -136,10 +136,10 @@ where
         if number.is_pending() {
             self.metrics.get_block_by_number.increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            Ok(pending_blocks.get_block(full))
-        } else {
-            EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
+            return Ok(pending_blocks.get_block(full));
         }
+
+        EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
     }
 
     async fn get_transaction_receipt(

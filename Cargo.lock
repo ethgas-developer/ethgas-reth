@@ -3057,7 +3057,53 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethgas-flashblocks"
+name = "ethgas-node"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-trie",
+ "chrono",
+ "clap",
+ "ethgas-reth-flashblocks",
+ "ethgas-reth-rpc",
+ "eyre",
+ "futures",
+ "futures-util",
+ "itertools 0.14.0",
+ "jsonrpsee",
+ "metrics",
+ "metrics-derive",
+ "once_cell",
+ "reqwest",
+ "reth",
+ "reth-cli-util",
+ "reth-exex",
+ "reth-node-ethereum",
+ "reth-primitives",
+ "reth-rpc-convert",
+ "reth-rpc-eth-api",
+ "revm",
+ "revm-bytecode",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "ethgas-reth-flashblocks"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
@@ -3106,48 +3152,53 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethgas-node"
+name = "ethgas-reth-rpc"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-hardforks",
+ "alloy-genesis",
+ "alloy-network",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
- "alloy-trie",
- "chrono",
- "clap",
- "ethgas-flashblocks",
+ "alloy-serde",
+ "arc-swap",
+ "brotli",
+ "ethgas-reth-flashblocks",
  "eyre",
- "futures",
  "futures-util",
- "itertools 0.14.0",
  "jsonrpsee",
+ "jsonrpsee-types",
  "metrics",
  "metrics-derive",
- "once_cell",
- "reqwest",
+ "rand 0.9.2",
  "reth",
- "reth-cli-util",
+ "reth-db",
+ "reth-db-common",
+ "reth-e2e-test-utils",
+ "reth-ethereum-primitives",
+ "reth-evm",
+ "reth-evm-ethereum",
  "reth-exex",
  "reth-node-ethereum",
  "reth-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
  "reth-rpc-convert",
  "reth-rpc-eth-api",
- "revm",
- "revm-bytecode",
+ "reth-testing-utils",
+ "reth-tracing",
  "serde",
  "serde_json",
- "time",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]

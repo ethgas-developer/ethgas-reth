@@ -4,7 +4,7 @@ mod tests {
         payload::{
             ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
         },
-        rpc::{EthApiExt, EthApiOverrideServer},
+        traits::{EthApiExt, EthApiOverrideServer},
         service::FlashblocksReceiver,
         state::FlashblocksState,
     };

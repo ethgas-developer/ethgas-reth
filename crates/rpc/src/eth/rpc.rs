@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{metrics::Metrics, pending::PendingBlocks};
+use crate::metrics::Metrics;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
@@ -10,7 +10,7 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::state::StateOverride;
-use arc_swap::Guard;
+use ethgas_reth_flashblocks::traits::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -25,7 +25,7 @@ use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use tokio::{
-    sync::{broadcast, broadcast::error::RecvError},
+    sync::{broadcast::error::RecvError},
     time,
 };
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
@@ -33,40 +33,6 @@ use tracing::{debug, trace, warn};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
-
-/// Core API for accessing flashblock state and data.
-pub trait FlashblocksAPI {
-    /// Retrieves the pending blocks.
-    fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>>;
-
-    /// Creates a subscription to receive flashblock updates.
-    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>>;
-}
-
-pub trait PendingBlocksAPI {
-    /// Get the canonical block number on top of which all pending state is built
-    fn get_canonical_block_number(&self) -> BlockNumberOrTag;
-
-    /// Get the pending transactions count for an address
-    fn get_transaction_count(&self, address: Address) -> U256;
-
-    /// Retrieves the current block. If `full` is true, includes full transaction details.
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Ethereum>>;
-
-    /// Gets transaction receipt by hash.
-    fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Ethereum>>;
-
-    /// Gets transaction details by hash.
-    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Ethereum>>;
-
-    /// Gets balance for an address. Returns None if address not updated in flashblocks.
-    fn get_balance(&self, address: Address) -> Option<U256>;
-
-    fn get_state_overrides(&self) -> Option<StateOverride>;
-
-    /// Gets logs from pending state matching the provided filter.
-    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log>;
-}
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -185,6 +151,14 @@ where
             tx_hash = %tx_hash
         );
 
+        // Check canonical chain first to avoid race condition where flashblocks
+        // state hasn't been cleared yet after canonical block commit
+        if let Some(canonical_receipt) =
+            EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await?
+        {
+            return Ok(Some(canonical_receipt));
+        }
+
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
         if let Some(fb_receipt) = pending_blocks.get_transaction_receipt(tx_hash) {
             self.metrics.get_transaction_receipt.increment(1);
@@ -251,8 +225,17 @@ where
             tx_hash = %tx_hash
         );
 
-        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        // Check canonical chain first to avoid race condition where flashblocks
+        // state hasn't been cleared yet after canonical block commit
+        if let Some(canonical_tx) = EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
+            .await?
+            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
+            .transpose()?
+        {
+            return Ok(Some(canonical_tx));
+        }
 
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
         if let Some(fb_transaction) = pending_blocks.get_transaction_by_hash(tx_hash) {
             self.metrics.get_transaction_receipt.increment(1);
             return Ok(Some(fb_transaction));

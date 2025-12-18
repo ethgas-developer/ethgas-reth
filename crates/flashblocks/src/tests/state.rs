@@ -4,7 +4,7 @@ mod tests {
         payload::{
             ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
         },
-        rpc::{FlashblocksAPI, PendingBlocksAPI},
+        traits::{FlashblocksAPI, PendingBlocksAPI},
         service::FlashblocksReceiver,
         state::FlashblocksState,
         tests::utils::create_test_provider_factory,

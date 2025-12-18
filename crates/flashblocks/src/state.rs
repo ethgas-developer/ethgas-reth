@@ -2,7 +2,7 @@ use crate::{
     metrics::Metrics,
     payload::FlashBlock,
     pending::{PendingBlocks, PendingBlocksBuilder},
-    rpc::{FlashblocksAPI, PendingBlocksAPI},
+    traits::{FlashblocksAPI, PendingBlocksAPI},
     service::FlashblocksReceiver,
 };
 use alloy_consensus::{

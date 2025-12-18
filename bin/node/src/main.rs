@@ -1,5 +1,4 @@
-use ethgas_flashblocks::{
-    rpc::{EthApiExt, EthApiOverrideServer},
+use ethgas_reth_flashblocks::{
     service::FlashblocksSubscriber,
     state::FlashblocksState,
 };
@@ -12,6 +11,7 @@ use reth::{
 use reth_exex::ExExEvent;
 use reth_node_ethereum::EthereumNode;
 use std::sync::Arc;
+use ethgas_reth_rpc::{EthApiExt, EthApiOverrideServer};
 
 use clap::Parser;
 use reth::{

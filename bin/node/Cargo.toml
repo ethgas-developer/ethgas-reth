@@ -5,7 +5,8 @@ edition.workspace = true
 
 [dependencies]
 # internal
-ethgas-flashblocks.workspace = true
+ethgas-reth-flashblocks.workspace = true
+ethgas-reth-rpc.workspace = true
 
 # reth
 reth.workspace = true

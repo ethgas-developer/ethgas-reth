@@ -4,9 +4,8 @@ edition = "2024"
 
 [workspace]
 resolver = "2"
-members = ["crates/flashblocks", "crates/node"]
-
-default-members = ["crates/*"]
+members = [ "bin/node","crates/*"]
+default-members = ["bin/node"]
 
 [workspace.dependencies]
 # internal

@@ -3188,6 +3188,7 @@ dependencies = [
  "reth-primitives",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-rpc",
  "reth-rpc-convert",
  "reth-rpc-eth-api",
  "reth-testing-utils",

@@ -19,6 +19,7 @@ reth-evm-ethereum.workspace = true
 reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-exex.workspace = true
+reth-rpc.workspace = true
 
 # alloy
 alloy-primitives.workspace = true

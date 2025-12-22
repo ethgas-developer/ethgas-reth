@@ -2,7 +2,7 @@
 mod tests {
     use crate::{
         payload::{
-            ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
+            ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
         },
         traits::{EthApiExt, EthApiOverrideServer},
         service::FlashblocksReceiver,
@@ -38,7 +38,7 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
 
     pub struct NodeContext {
-        sender: mpsc::Sender<(FlashBlock, oneshot::Sender<()>)>,
+        sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
         http_api_addr: SocketAddr,
         _node_exit_future: NodeExitFuture,
         _node: Box<dyn Any + Sync + Send>,
@@ -46,7 +46,7 @@ mod tests {
     }
 
     impl NodeContext {
-        pub async fn send_payload(&self, payload: FlashBlock) -> eyre::Result<()> {
+        pub async fn send_payload(&self, payload: Flashblock) -> eyre::Result<()> {
             let (tx, rx) = oneshot::channel();
             self.sender.send((payload, tx)).await?;
             rx.await?;
@@ -113,7 +113,7 @@ mod tests {
         let node = EthereumNode::default();
 
         // Start websocket server to simulate the builder and send payloads back to the node
-        let (sender, mut receiver) = mpsc::channel::<(FlashBlock, oneshot::Sender<()>)>(100);
+        let (sender, mut receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
 
         let NodeHandle { node, node_exit_future } = NodeBuilder::new(node_config.clone())
             .testing_node(exec.clone())
@@ -161,8 +161,8 @@ mod tests {
         })
     }
 
-    fn create_first_payload(tx_hash: B256, tx_bytes: Bytes) -> FlashBlock {
-        FlashBlock {
+    fn create_first_payload(tx_hash: B256, tx_bytes: Bytes) -> Flashblock {
+        Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 0,
             base: Some(ExecutionPayloadBaseV1 {
@@ -200,8 +200,8 @@ mod tests {
         }
     }
 
-    fn create_first_payload_() -> FlashBlock {
-        FlashBlock {
+    fn create_first_payload_() -> Flashblock {
+        Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 0,
             base: Some(ExecutionPayloadBaseV1 {
@@ -266,8 +266,8 @@ mod tests {
         "0x02f8660102806482abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084d09de08ac080a08d498dd9cd95ed80304f9d3a11c547f205ae2e3de5ebe1db0781914acb090654a0092a947f344f3e66e5ae06bd61bb5b7cf8288b775d6c433f3189607788465e1d"
     );
 
-    fn create_second_payload() -> FlashBlock {
-        let payload = FlashBlock {
+    fn create_second_payload() -> Flashblock {
+        let payload = Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 1,
             base: None,

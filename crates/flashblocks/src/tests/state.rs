@@ -2,7 +2,7 @@
 mod tests {
     use crate::{
         payload::{
-            ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
+            ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
         },
         traits::{FlashblocksAPI, PendingBlocksAPI},
         service::FlashblocksReceiver,
@@ -157,7 +157,7 @@ mod tests {
                 .into_eip1559()
         }
 
-        async fn send_flashblock(&self, flashblock: FlashBlock) {
+        async fn send_flashblock(&self, flashblock: Flashblock) {
             self.flashblocks.on_flashblock_received(flashblock);
             sleep(Duration::from_millis(SLEEP_TIME)).await;
         }
@@ -357,7 +357,7 @@ mod tests {
             self
         }
 
-        pub fn build(&self) -> FlashBlock {
+        pub fn build(&self) -> Flashblock {
             let current_block = self.harness.current_canonical_block();
             let canonical_block_num =
                 self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
@@ -378,7 +378,7 @@ mod tests {
                 None
             };
 
-            FlashBlock {
+            Flashblock {
                 payload_id: PayloadId::default(),
                 index: self.index,
                 base,

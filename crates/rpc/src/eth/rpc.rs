@@ -147,7 +147,7 @@ where
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Ethereum>>> {
         debug!(
-            message = "rpc::block_by_number",
+            message = "rpc::get_transaction_receipt",
             tx_hash = %tx_hash
         );
 

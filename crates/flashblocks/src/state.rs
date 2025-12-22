@@ -202,6 +202,7 @@ where
                             self.pending_blocks.swap(new_pending_blocks);
                             let duration = start_time.elapsed();
                             self.metrics.block_processing_duration.record(duration);
+
                             debug!(
                                 message = "successfully processed flashblock",
                                 block_number = flashblock.metadata.block_number,
@@ -232,8 +233,16 @@ where
                     .filter(|fb| fb.metadata.block_number == block.number)
                     .count();
                 self.metrics.flashblocks_in_block.record(num_fbs_for_canon as f64);
+                self.metrics
+                    .pending_snapshot_height
+                    .set(pending_blocks.latest_block_number() as f64);
 
                 if pending_blocks.latest_block_number() <= block.number {
+                    debug!(
+                        message = "pending snapshot cleared because canonical caught up",
+                        latest_pending_block = pending_blocks.latest_block_number(),
+                        canonical_block = block.number,
+                    );
                     self.metrics.pending_clear_catchup.increment(1);
                     self.metrics
                         .pending_snapshot_height
@@ -393,10 +402,10 @@ where
             None => CacheDB::new(state),
         };
 
-        let mut state_overrides = match &prev_pending_blocks {
-            Some(pending_blocks) => pending_blocks.get_state_overrides().unwrap_or_default(),
-            None => StateOverride::default(),
-        };
+        let mut state_overrides =
+            prev_pending_blocks.as_ref().map_or_else(StateOverride::default, |pending_blocks| {
+                pending_blocks.get_state_overrides().unwrap_or_default()
+            });
 
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
@@ -442,7 +451,9 @@ where
             );
 
             let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
+                // TODO: compute blob gas used
                 blob_gas_used: 0,
+                // TODO: compute excess blob gas
                 excess_blob_gas: 0,
                 payload_inner: ExecutionPayloadV2 {
                     withdrawals,

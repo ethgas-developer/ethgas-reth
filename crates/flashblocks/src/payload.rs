@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Represents a Flashblock, a real-time block-like structure received from helix relay.
 #[derive(Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct FlashBlock {
+pub struct Flashblock {
     /// The unique payload ID as assigned by the execution engine for this block.
     pub payload_id: PayloadId,
     /// A sequential index that identifies the order of this Flashblock.
@@ -19,7 +19,7 @@ pub struct FlashBlock {
     pub metadata: Metadata,
 }
 
-impl FlashBlock {
+impl Flashblock {
     /// Returns the block number of this flashblock.
     pub const fn _block_number(&self) -> u64 {
         self.metadata.block_number

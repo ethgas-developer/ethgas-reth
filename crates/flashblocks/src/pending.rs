@@ -1,4 +1,4 @@
-use crate::payload::FlashBlock;
+use crate::payload::Flashblock;
 use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::Ethereum;
@@ -14,7 +14,7 @@ use reth::revm::{db::Cache, state::EvmState};
 use reth_rpc_eth_api::RpcBlock;
 
 pub struct PendingBlocksBuilder {
-    flashblocks: Vec<FlashBlock>,
+    flashblocks: Vec<Flashblock>,
     headers: Vec<Sealed<Header>>,
 
     transactions: Vec<Transaction>,
@@ -46,7 +46,7 @@ impl PendingBlocksBuilder {
     }
 
     #[inline]
-    pub(crate) fn with_flashblocks(&mut self, flashblocks: Vec<FlashBlock>) -> &Self {
+    pub(crate) fn with_flashblocks(&mut self, flashblocks: Vec<Flashblock>) -> &Self {
         self.flashblocks = flashblocks;
         self
     }
@@ -127,7 +127,7 @@ impl PendingBlocksBuilder {
 
 #[derive(Debug, Clone)]
 pub struct PendingBlocks {
-    flashblocks: Vec<FlashBlock>,
+    flashblocks: Vec<Flashblock>,
     headers: Vec<Sealed<Header>>,
     transactions: Vec<Transaction>,
 
@@ -158,7 +158,7 @@ impl PendingBlocks {
         self.headers.last().unwrap().clone()
     }
 
-    pub fn get_flashblocks(&self) -> Vec<FlashBlock> {
+    pub fn get_flashblocks(&self) -> Vec<Flashblock> {
         self.flashblocks.clone()
     }
 

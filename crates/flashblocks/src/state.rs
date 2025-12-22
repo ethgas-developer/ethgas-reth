@@ -1,6 +1,6 @@
 use crate::{
     metrics::Metrics,
-    payload::FlashBlock,
+    payload::Flashblock,
     pending::{PendingBlocks, PendingBlocksBuilder},
     traits::{FlashblocksAPI, PendingBlocksAPI},
     service::FlashblocksReceiver,
@@ -53,7 +53,7 @@ const BUFFER_SIZE: usize = 20;
 
 enum StateUpdate {
     Canonical(RecoveredBlock<Block>),
-    Flashblock(FlashBlock),
+    Flashblock(Flashblock),
 }
 
 #[derive(Debug, Clone)]
@@ -115,7 +115,7 @@ where
 }
 
 impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
-    fn on_flashblock_received(&self, flashblock: FlashBlock) {
+    fn on_flashblock_received(&self, flashblock: Flashblock) {
         match self.queue.send(StateUpdate::Flashblock(flashblock.clone())) {
             Ok(_) => {
                 info!(
@@ -321,7 +321,7 @@ where
     fn process_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        flashblock: &FlashBlock,
+        flashblock: &Flashblock,
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
         match &prev_pending_blocks {
             Some(pending_blocks) => {
@@ -374,10 +374,10 @@ where
     fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        flashblocks: &Vec<FlashBlock>,
+        flashblocks: &Vec<Flashblock>,
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
         // BTreeMap guarantees ascending order of keys while iterating
-        let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<FlashBlock>>::new();
+        let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
             flashblocks_per_block
                 .entry(flashblock.metadata.block_number)
@@ -617,7 +617,7 @@ where
     fn is_next_flashblock(
         &self,
         pending_blocks: &Arc<PendingBlocks>,
-        flashblock: &FlashBlock,
+        flashblock: &Flashblock,
     ) -> bool {
         let is_next_of_block = flashblock.metadata.block_number ==
             pending_blocks.latest_block_number() &&

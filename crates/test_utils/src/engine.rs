@@ -1,9 +1,14 @@
 use std::{fmt, marker::PhantomData, time::Duration};
 
-use alloy_rpc_types_engine::{JwtSecret, PayloadId};
+use alloy_eips::eip7685::Requests;
+use alloy_primitives::B256;
+use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadId, PayloadStatus};
 use eyre::Result;
 use jsonrpsee::core::client::SubscriptionClientT;
+use reth::{api::{EngineTypes, PayloadTypes}, rpc::api::EngineApiClient};
+use reth_node_ethereum::EthEngineTypes;
 use reth_rpc_layer::AuthClientLayer;
+use tracing::debug;
 use url::Url;
 
 use crate::DEFAULT_JWT_SECRET;
@@ -114,27 +119,27 @@ impl<P: EngineProtocol> EngineApi<P> {
     pub async fn get_payload(
         &self,
         payload_id: PayloadId,
-    ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
+    ) -> eyre::Result<<EthEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
         debug!("Fetching payload with id: {} at {}", payload_id, chrono::Utc::now());
-        Ok(OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
+        Ok(EngineApiClient::<EthEngineTypes>::get_payload_v4(&self.client().await, payload_id)
             .await?)
     }
 
     /// Submit a new payload to the Engine API
     pub async fn new_payload(
         &self,
-        payload: OpExecutionPayloadV4,
+        payload: ExecutionPayloadV3,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
         debug!("Submitting new payload at {}...", chrono::Utc::now());
-        Ok(OpEngineApiClient::<OpEngineTypes>::new_payload_v4(
+        Ok(EngineApiClient::<EthEngineTypes>::new_payload_v4(
             &self.client().await,
             payload,
             versioned_hashes,
             parent_beacon_block_root,
-            execution_requests,
+            alloy_eips::eip7685::RequestsOrHash::Requests(execution_requests),
         )
         .await?)
     }
@@ -144,7 +149,7 @@ impl<P: EngineProtocol> EngineApi<P> {
         &self,
         current_head: B256,
         new_head: B256,
-        payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
+        payload_attributes: Option<<EthEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         debug!(
             "Updating forkchoice at {} (current: {}, new: {})",
@@ -152,7 +157,7 @@ impl<P: EngineProtocol> EngineApi<P> {
             current_head,
             new_head
         );
-        let result = OpEngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
+        let result = EngineApiClient::<EthEngineTypes>::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {
                 head_block_hash: new_head,

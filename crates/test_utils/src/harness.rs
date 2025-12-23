@@ -1,8 +1,23 @@
-use eyre::Result;
-use reth::builder::NodeHandle;
+use crate::{
+    accounts::TestAccounts,
+    engine::{EngineApi, IpcEngine},
+    init_silenced_tracing,
+    node::{EthAddOns, LocalNode, LocalNodeProvider, OpBuilder, default_launcher},
+};
+use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag, eip7685::Requests};
+use alloy_network::Ethereum;
+use alloy_primitives::{B256, Bytes};
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_types_engine::PayloadAttributes;
+use eyre::{Result, eyre};
+use reth::{builder::NodeHandle, payload::EthPayloadBuilderAttributes};
 use reth_e2e_test_utils::Adapter;
-
-use crate::{accounts::TestAccounts, engine::{EngineApi, IpcEngine}, node::{LocalNode, default_launcher}};
+use reth_node_ethereum::EthereumNode;
+use reth_primitives::{Block, RecoveredBlock};
+use reth_primitives_traits::Block as BlockT;
+use reth_provider::{BlockNumReader, BlockReader, ChainSpecProvider};
+use std::time::Duration;
+use tokio::time::sleep;
 
 /// High-level façade that bundles a local node, engine API client, and common helpers.
 #[derive(Debug)]
@@ -22,7 +37,7 @@ impl TestHarness {
     pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>>>,
     {
         init_silenced_tracing();
         let node = LocalNode::new(launcher).await?;
@@ -34,13 +49,13 @@ impl TestHarness {
         let engine = node.engine_api()?;
         let accounts = TestAccounts::new();
 
-        sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
+        sleep(Duration::from_millis(500)).await;
 
         Ok(Self { node, engine, accounts })
     }
 
     /// Return an Optimism JSON-RPC provider connected to the harness node.
-    pub fn provider(&self) -> RootProvider<Optimism> {
+    pub fn provider(&self) -> RootProvider<Ethereum> {
         self.node.provider().expect("provider should always be available after node initialization")
     }
 
@@ -66,11 +81,6 @@ impl TestHarness {
 
     /// Build a block using the provided transactions and push it through the engine.
     pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
-        // Ensure the block always starts with the required L1 block info deposit.
-        if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
-            transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX.clone());
-        }
-
         let latest_block = self
             .provider()
             .get_block_by_number(BlockNumberOrTag::Latest)
@@ -80,27 +90,16 @@ impl TestHarness {
         let parent_hash = latest_block.header.hash;
         let parent_beacon_block_root =
             latest_block.header.parent_beacon_block_root.unwrap_or(B256::ZERO);
-        let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
+        let next_timestamp = latest_block.header.timestamp + 12;
 
         let min_base_fee = latest_block.header.base_fee_per_gas.unwrap_or_default();
         let chain_spec = self.node.blockchain_provider().chain_spec();
         let base_fee_params = chain_spec.base_fee_params_at_timestamp(next_timestamp);
-        let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
-            | (base_fee_params.elasticity_multiplier as u64);
+        let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32) |
+            (base_fee_params.elasticity_multiplier as u64);
 
-        let payload_attributes = OpPayloadAttributes {
-            payload_attributes: PayloadAttributes {
-                timestamp: next_timestamp,
-                parent_beacon_block_root: Some(parent_beacon_block_root),
-                withdrawals: Some(vec![]),
-                ..Default::default()
-            },
-            transactions: Some(transactions),
-            gas_limit: Some(GAS_LIMIT),
-            no_tx_pool: Some(true),
-            min_base_fee: Some(min_base_fee),
-            eip_1559_params: Some(B64::from(eip_1559_params)),
-        };
+        // todo
+        let payload_attributes = PayloadAttributes::default();
 
         let forkchoice_result = self
             .engine
@@ -111,22 +110,22 @@ impl TestHarness {
             .payload_id
             .ok_or_else(|| eyre!("Forkchoice update did not return payload ID"))?;
 
-        sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
+        sleep(Duration::from_millis(100)).await;
 
         let payload_envelope = self.engine.get_payload(payload_id).await?;
 
         let execution_requests = if payload_envelope.execution_requests.is_empty() {
             Requests::default()
         } else {
-            Requests::new(payload_envelope.execution_requests)
+            Requests::new(payload_envelope.execution_requests.to_vec())
         };
 
         let payload_status = self
             .engine
             .new_payload(
-                payload_envelope.execution_payload,
+                payload_envelope.execution_payload.clone(),
                 vec![],
-                payload_envelope.parent_beacon_block_root,
+                payload_envelope.execution_payload.payload_inner.payload_inner.parent_hash,
                 execution_requests,
             )
             .await?;
@@ -153,7 +152,7 @@ impl TestHarness {
     }
 
     /// Return the latest recovered block as seen by the local blockchain provider.
-    pub fn latest_block(&self) -> RecoveredBlock<OpBlock> {
+    pub fn latest_block(&self) -> RecoveredBlock<Block> {
         let provider = self.blockchain_provider();
         let best_number = provider.best_block_number().expect("able to read best block number");
         let block = provider
@@ -179,7 +178,7 @@ mod tests {
 
         let provider = harness.provider();
         let chain_id = provider.get_chain_id().await?;
-        assert_eq!(chain_id, crate::BASE_CHAIN_ID);
+        assert_eq!(chain_id, crate::CHAIN_ID);
 
         let alice_balance = provider.get_balance(harness.accounts().alice.address).await?;
         assert!(alice_balance > U256::ZERO);

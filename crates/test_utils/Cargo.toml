@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 ethgas-reth-flashblocks.workspace = true
+ethgas-reth-rpc.workspace = true
 
 # reth
 reth.workspace = true
@@ -23,6 +24,7 @@ reth-exex.workspace = true
 reth-rpc.workspace = true
 reth-db.workspace = true
 reth-rpc-layer.workspace = true
+reth-e2e-test-utils.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
@@ -65,7 +67,8 @@ arc-swap.workspace = true
 tower = "0.5"
 derive_more = "2.1.0"
 tracing-subscriber.workspace = true
-
+chrono.workspace = true
+once_cell.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

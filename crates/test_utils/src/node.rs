@@ -1,15 +1,47 @@
-use std::{any::Any, cell::OnceCell, fmt, net::SocketAddr, sync::{Arc, Mutex}};
+use std::{
+    any::Any,
+    fmt,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 
-use ethgas_reth_flashblocks::{payload::FlashBlock, state::FlashblocksState};
+use alloy_genesis::Genesis;
+use alloy_network::Ethereum;
+use alloy_provider::RootProvider;
+use alloy_rpc_client::RpcClient;
+use ethgas_reth_flashblocks::{
+    payload::Flashblock, service::FlashblocksReceiver, state::FlashblocksState,
+};
+use ethgas_reth_rpc::{EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer};
 use eyre::Result;
-use reth::{api::NodeTypesWithDBAdapter, core::exit::NodeExitFuture, tasks::TaskManager};
-use reth_db::{DatabaseEnv, test_utils::TempDatabase};
+use once_cell::sync::OnceCell;
+use reth::{
+    api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter},
+    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
+    builder::{
+        Node, NodeBuilder, NodeBuilderWithComponents, NodeConfig, NodeHandle, WithLaunchContext,
+    },
+    chainspec::ChainSpec,
+    core::exit::NodeExitFuture,
+    dirs::{DataDirPath, MaybePlatformPath},
+    tasks::TaskManager,
+};
+use reth_db::{
+    ClientVersion, DatabaseEnv, init_db,
+    mdbx::DatabaseArguments,
+    test_utils::{ERROR_DB_CREATION, TempDatabase, tempdir_path},
+};
+use reth_e2e_test_utils::{Adapter, TmpDB};
+use reth_exex::ExExEvent;
 use reth_node_ethereum::EthereumNode;
-use reth_provider::providers::BlockchainProvider;
+use reth_provider::{CanonStateSubscriptions, ChainSpecProvider, providers::BlockchainProvider};
 use tokio::sync::{mpsc, oneshot};
+use tokio_stream::StreamExt;
 
-/// Convenience alias for the local blockchain provider type.
+use crate::engine::EngineApi;
+
 type NodeTypes = NodeTypesWithDBAdapter<EthereumNode, Arc<TempDatabase<DatabaseEnv>>>;
+/// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = BlockchainProvider<NodeTypes>;
 /// Convenience alias for the Flashblocks state backing the local node.
 pub type LocalFlashblocksState = FlashblocksState<LocalNodeProvider>;
@@ -38,17 +70,15 @@ impl fmt::Debug for LocalNode {
 /// Components that allow tests to interact with the Flashblocks worker tasks.
 #[derive(Clone)]
 pub struct FlashblocksParts {
-    sender: mpsc::Sender<(FlashBlock, oneshot::Sender<()>)>,
+    sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     state: Arc<LocalFlashblocksState>,
 }
-
 
 impl fmt::Debug for FlashblocksParts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FlashblocksParts").finish_non_exhaustive()
     }
 }
-
 
 impl FlashblocksParts {
     /// Clone the shared [`FlashblocksState`] handle.
@@ -57,7 +87,7 @@ impl FlashblocksParts {
     }
 
     /// Send a flashblock to the background processor and wait until it is handled.
-    pub async fn send(&self, flashblock: FlashBlock) -> Result<()> {
+    pub async fn send(&self, flashblock: Flashblock) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.sender.send((flashblock, tx)).await.map_err(|err| eyre::eyre!(err))?;
         rx.await.map_err(|err| eyre::eyre!(err))?;
@@ -71,17 +101,16 @@ struct FlashblocksNodeExtensions {
 }
 
 struct FlashblocksNodeExtensionsInner {
-    sender: mpsc::Sender<(FlashBlock, oneshot::Sender<()>)>,
+    sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     #[allow(clippy::type_complexity)]
-    receiver: Arc<Mutex<Option<mpsc::Receiver<(FlashBlock, oneshot::Sender<()>)>>>>,
+    receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
     fb_cell: Arc<OnceCell<Arc<LocalFlashblocksState>>>,
     process_canonical: bool,
 }
 
-
 impl FlashblocksNodeExtensions {
     fn new(process_canonical: bool) -> Self {
-        let (sender, receiver) = mpsc::channel::<(FlashBlock, oneshot::Sender<()>)>(100);
+        let (sender, receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
         let inner = FlashblocksNodeExtensionsInner {
             sender,
             receiver: Arc::new(Mutex::new(Some(receiver))),
@@ -110,11 +139,13 @@ impl FlashblocksNodeExtensions {
                             if let Some(committed) = note.committed_chain() {
                                 let hash = committed.tip().num_hash();
                                 if process_canonical {
-                                    // Many suites drive canonical updates manually to reproduce race conditions, so
-                                    // allowing this to be disabled keeps canonical replay deterministic.
+                                    // Many suites drive canonical updates manually to reproduce
+                                    // race conditions, so
+                                    // allowing this to be disabled keeps canonical replay
+                                    // deterministic.
                                     let chain = Arc::unwrap_or_clone(committed);
                                     for (_, block) in chain.into_blocks() {
-                                        fb.on_canonical_block_received(block);
+                                        fb.on_canonical_block_received(&block);
                                     }
                                 }
                                 let _ = ctx.events.send(ExExEvent::FinishedHeight(hash));
@@ -146,8 +177,9 @@ impl FlashblocksNodeExtensions {
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
 
                 // Register eth_subscribe subscription endpoint for flashblocks
-                // Uses replace_configured since eth_subscribe already exists from reth's standard module
-                // Pass eth_api to enable proxying standard subscription types to reth's implementation
+                // Uses replace_configured since eth_subscribe already exists from reth's standard
+                // module Pass eth_api to enable proxying standard subscription
+                // types to reth's implementation
                 let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
                 ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
@@ -187,10 +219,23 @@ impl FlashblocksNodeExtensions {
     }
 }
 
+pub type EthTypes = FullNodeTypesAdapter<
+    EthereumNode,
+    TmpDB,
+    BlockchainProvider<NodeTypesWithDBAdapter<EthereumNode, TmpDB>>,
+>;
+/// Builder that wires up the concrete node components.
+pub type EthComponentsBuilder = <EthereumNode as Node<EthTypes>>::ComponentsBuilder;
+/// Additional services attached to the node builder.
+pub type EthAddOns = <EthereumNode as Node<EthTypes>>::AddOns;
+/// Launcher builder used by the harness to customize node startup.
+pub type OpBuilder =
+    WithLaunchContext<NodeBuilderWithComponents<EthTypes, EthComponentsBuilder, EthAddOns>>;
+
 /// Default launcher that is reused across the harness and integration tests.
 pub async fn default_launcher(
     builder: OpBuilder,
-) -> eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>> {
+) -> eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>> {
     let launcher = builder.engine_api_launcher();
     builder.launch_with(launcher).await
 }
@@ -200,7 +245,7 @@ impl LocalNode {
     pub async fn new<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>>>,
     {
         build_node(launcher).await
     }
@@ -232,10 +277,10 @@ impl LocalNode {
     }
 
     /// Create an HTTP provider pointed at the node's public RPC endpoint.
-    pub fn provider(&self) -> Result<RootProvider<Optimism>> {
+    pub fn provider(&self) -> Result<RootProvider<Ethereum>> {
         let url = format!("http://{}", self.http_api_addr);
         let client = RpcClient::builder().http(url.parse()?);
-        Ok(RootProvider::<Optimism>::new(client))
+        Ok(RootProvider::<Ethereum>::new(client))
     }
 
     /// Build an Engine API client that talks to the node's IPC endpoint.
@@ -257,13 +302,13 @@ impl LocalNode {
 async fn build_node<L, LRet>(launcher: L) -> Result<LocalNode>
 where
     L: FnOnce(OpBuilder) -> LRet,
-    LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+    LRet: Future<Output = eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>>>,
 {
     let tasks = TaskManager::current();
     let exec = tasks.executor();
 
     let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json"))?;
-    let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
+    let chain_spec = Arc::new(ChainSpec::from_genesis(genesis));
 
     let network_config = NetworkArgs {
         discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
@@ -281,7 +326,7 @@ where
         RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
     rpc_args.auth_ipc_path = unique_ipc_path;
 
-    let node = OpNode::new(RollupArgs::default());
+    let node = EthereumNode::default();
 
     let temp_db = LocalNode::create_test_database()?;
     let db_path = temp_db.path().to_path_buf();
@@ -298,7 +343,7 @@ where
     let builder = NodeBuilder::new(node_config.clone())
         .with_database(temp_db)
         .with_launch_context(exec.clone())
-        .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
+        .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
         .with_components(node.components_builder())
         .with_add_ons(node.add_ons());
 
@@ -334,7 +379,7 @@ fn init_flashblocks_state(
     provider: &LocalNodeProvider,
 ) -> Arc<LocalFlashblocksState> {
     cell.get_or_init(|| {
-        let fb = Arc::new(FlashblocksState::new(provider.clone(), 5));
+        let fb = Arc::new(FlashblocksState::new(provider.clone(), provider.chain_spec(), 5));
         fb.start();
         fb
     })
@@ -372,7 +417,7 @@ impl FlashblocksLocalNode {
     pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>>>,
     {
         Self::with_launcher_inner(launcher, true).await
     }
@@ -381,7 +426,7 @@ impl FlashblocksLocalNode {
     pub async fn with_manual_canonical_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>>>,
     {
         Self::with_launcher_inner(launcher, false).await
     }
@@ -389,7 +434,7 @@ impl FlashblocksLocalNode {
     async fn with_launcher_inner<L, LRet>(launcher: L, process_canonical: bool) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>>>,
     {
         let extensions = FlashblocksNodeExtensions::new(process_canonical);
         let wrapped_launcher = extensions.wrap_launcher(launcher);
@@ -419,6 +464,3 @@ impl FlashblocksLocalNode {
         &self.node
     }
 }
-
-
-

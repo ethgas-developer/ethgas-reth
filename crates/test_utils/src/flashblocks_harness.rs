@@ -3,17 +3,18 @@
 use std::sync::Arc;
 
 use derive_more::Deref;
+use ethgas_reth_flashblocks::payload::Flashblock;
 use eyre::Result;
 use futures_util::Future;
 use reth::builder::NodeHandle;
 use reth_e2e_test_utils::Adapter;
-use reth_optimism_node::OpNode;
+use reth_node_ethereum::EthereumNode;
 
 use crate::{
     harness::TestHarness,
     init_silenced_tracing,
     node::{
-        FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, OpAddOns, OpBuilder,
+        FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, EthAddOns, OpBuilder,
         default_launcher,
     },
 };
@@ -41,7 +42,7 @@ impl FlashblocksHarness {
     pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>>>,
     {
         init_silenced_tracing();
         let flash_node = FlashblocksLocalNode::with_launcher(launcher).await?;
@@ -52,7 +53,7 @@ impl FlashblocksHarness {
     pub async fn manual_canonical_with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<EthereumNode>, EthAddOns>>>,
     {
         init_silenced_tracing();
         let flash_node = FlashblocksLocalNode::with_manual_canonical_launcher(launcher).await?;

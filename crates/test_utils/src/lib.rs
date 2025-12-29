@@ -8,6 +8,18 @@ mod flashblocks_harness;
 mod harness;
 mod node;
 
+pub use flashblocks_harness::FlashblocksHarness;
+pub use harness::TestHarness;
+pub use node::LocalNodeProvider;
+pub use accounts::TestAccounts;
+
+pub use ethgas_reth_flashblocks::{
+    state::FlashblocksState,
+    traits::{FlashblocksAPI, PendingBlocksAPI},
+    payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata},
+};
+
+
 pub const CHAIN_ID: u64 = NamedChain::Hoodi as u64;
 pub const DEFAULT_JWT_SECRET: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000000";

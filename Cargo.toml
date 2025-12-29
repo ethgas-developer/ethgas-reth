@@ -11,6 +11,7 @@ default-members = ["bin/node"]
 # internal
 ethgas-reth-flashblocks = { path = "crates/flashblocks" }
 ethgas-reth-rpc = { path = "crates/rpc" }
+test_utils = { path = "crates/test_utils" }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }

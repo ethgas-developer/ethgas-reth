@@ -12,6 +12,7 @@ pub use flashblocks_harness::FlashblocksHarness;
 pub use harness::TestHarness;
 pub use node::LocalNodeProvider;
 pub use accounts::TestAccounts;
+pub use contracts::{DoubleCounter, MockERC20, TransparentUpgradeableProxy};
 
 pub use ethgas_reth_flashblocks::{
     state::FlashblocksState,

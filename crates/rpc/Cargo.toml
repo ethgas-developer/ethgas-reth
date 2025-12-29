@@ -58,6 +58,9 @@ brotli.workspace = true
 arc-swap.workspace = true
 
 [dev-dependencies]
+test_utils = { path = "../test_utils" }
+alloy-sol-types = "1.4.1"
+
 rand.workspace = true
 reth-db.workspace = true
 reth-testing-utils.workspace = true

@@ -40,7 +40,9 @@ alloy-serde.workspace = true
 alloy-network.workspace = true
 alloy-signer = "1.0"
 alloy-signer-local = "1.1.0"
-alloy-sol-macro = "1.4.1"
+alloy-sol-macro = { version = "1.4.1", features = ["json"] }
+alloy-sol-types = "1.4.1"
+alloy-contract = "1.0"
 
 # tokio
 tokio.workspace = true

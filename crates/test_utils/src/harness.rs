@@ -4,9 +4,9 @@ use crate::{
     init_silenced_tracing,
     node::{EthAddOns, LocalNode, LocalNodeProvider, OpBuilder, default_launcher},
 };
-use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag, eip7685::Requests};
+use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag, eip4895::Withdrawals, eip7685::Requests};
 use alloy_network::Ethereum;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::PayloadAttributes;
 use eyre::{Result, eyre};
@@ -80,7 +80,16 @@ impl TestHarness {
     }
 
     /// Build a block using the provided transactions and push it through the engine.
-    pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
+    pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
+        // First, submit all transactions to the transaction pool via RPC
+        for tx_bytes in &transactions {
+            let _ = self.provider().raw_request::<_, B256>("eth_sendRawTransaction".into(), vec![tx_bytes.clone()]).await;
+            // Ignore errors - transaction might already be in pool or invalid
+        }
+
+        // Give the pool time to process transactions
+        sleep(Duration::from_millis(50)).await;
+
         let latest_block = self
             .provider()
             .get_block_by_number(BlockNumberOrTag::Latest)
@@ -92,14 +101,20 @@ impl TestHarness {
             latest_block.header.parent_beacon_block_root.unwrap_or(B256::ZERO);
         let next_timestamp = latest_block.header.timestamp + 12;
 
-        let min_base_fee = latest_block.header.base_fee_per_gas.unwrap_or_default();
+        let _min_base_fee = latest_block.header.base_fee_per_gas.unwrap_or_default();
         let chain_spec = self.node.blockchain_provider().chain_spec();
         let base_fee_params = chain_spec.base_fee_params_at_timestamp(next_timestamp);
-        let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32) |
+        let _eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32) |
             (base_fee_params.elasticity_multiplier as u64);
 
-        // todo
-        let payload_attributes = PayloadAttributes::default();
+        // Construct payload attributes with withdrawals for post-Shanghai
+        let payload_attributes = PayloadAttributes {
+            timestamp: next_timestamp,
+            prev_randao: B256::random(),
+            suggested_fee_recipient: Address::random(),
+            withdrawals: Some(Vec::new()), // Empty withdrawals for post-Shanghai
+            parent_beacon_block_root: Some(parent_beacon_block_root),
+        };
 
         let forkchoice_result = self
             .engine

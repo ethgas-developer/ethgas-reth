@@ -13,7 +13,6 @@ pub use harness::TestHarness;
 pub use node::LocalNodeProvider;
 pub use accounts::TestAccounts;
 
-// Re-export flashblocks types for tests
 pub use ethgas_reth_flashblocks::{
     state::FlashblocksState,
     traits::{FlashblocksAPI, PendingBlocksAPI},

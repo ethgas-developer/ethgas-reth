@@ -81,17 +81,13 @@ impl TestHarness {
 
     /// Build a block using the provided transactions and push it through the engine.
     pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
-        // First, submit all transactions to the transaction pool via RPC
+        // submit transactions to the pool first so they can be included in the block
+        let provider = self.provider();
         for tx_bytes in &transactions {
-            let _ = self.provider().raw_request::<_, B256>("eth_sendRawTransaction".into(), vec![tx_bytes.clone()]).await;
-            // Ignore errors - transaction might already be in pool or invalid
+            let _ = provider.send_raw_transaction(tx_bytes).await;
         }
 
-        // Give the pool time to process transactions
-        sleep(Duration::from_millis(50)).await;
-
-        let latest_block = self
-            .provider()
+        let latest_block = provider
             .get_block_by_number(BlockNumberOrTag::Latest)
             .await?
             .ok_or_else(|| eyre!("No genesis block found"))?;
@@ -107,12 +103,11 @@ impl TestHarness {
         let _eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32) |
             (base_fee_params.elasticity_multiplier as u64);
 
-        // Construct payload attributes with withdrawals for post-Shanghai
         let payload_attributes = PayloadAttributes {
             timestamp: next_timestamp,
-            prev_randao: B256::random(),
-            suggested_fee_recipient: Address::random(),
-            withdrawals: Some(Vec::new()), // Empty withdrawals for post-Shanghai
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: Address::ZERO,
+            withdrawals: Some(vec![]),
             parent_beacon_block_root: Some(parent_beacon_block_root),
         };
 
@@ -140,7 +135,7 @@ impl TestHarness {
             .new_payload(
                 payload_envelope.execution_payload.clone(),
                 vec![],
-                payload_envelope.execution_payload.payload_inner.payload_inner.parent_hash,
+                parent_beacon_block_root,
                 execution_requests,
             )
             .await?;

@@ -52,8 +52,11 @@ impl PendingBlocksBuilder {
     }
 
     #[inline]
-    pub(crate) fn with_flashblocks(&mut self, flashblocks: Vec<Flashblock>) -> &Self {
-        self.flashblocks = flashblocks;
+    pub(crate) fn with_flashblocks(
+        &mut self,
+        flashblocks: impl IntoIterator<Item = Flashblock>,
+    ) -> &Self {
+        self.flashblocks.extend(flashblocks);
         self
     }
 

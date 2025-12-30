@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use DoubleCounter::DoubleCounterInstance;
-use alloy_consensus::{Receipt, Transaction};
+use alloy_consensus::Transaction;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
     Address, B256, Bytes, LogData, TxHash, U256, address, b256, bytes, map::HashMap,
@@ -485,17 +485,17 @@ async fn test_eth_simulate_v1() -> Result<()> {
         block_state_calls: vec![SimBlock {
             calls: vec![
                 // read count1() from counter contract
-                setup.count1().into(),
+                setup.count1().from(setup.harness.accounts().deployer.address).into(),
                 // increment() value in contract
                 TransactionRequest::default()
-                    .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                    .from(setup.harness.accounts().deployer.address)
                     .transaction_type(0)
                     .gas_limit(200000)
                     .to(setup.txn_details.counter_address)
                     .input(TransactionInput::new(bytes!("0xd09de08a")))
                     .into(),
                 // read count1() from counter contract
-                setup.count1().into(),
+                setup.count1().from(setup.harness.accounts().deployer.address).into(),
             ],
             block_overrides: None,
             state_overrides: None,

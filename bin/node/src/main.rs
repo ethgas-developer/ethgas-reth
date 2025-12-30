@@ -1,7 +1,5 @@
-use ethgas_reth_flashblocks::{
-    service::FlashblocksSubscriber,
-    state::FlashblocksState,
-};
+use ethgas_reth_flashblocks::{service::FlashblocksSubscriber, state::FlashblocksState};
+use ethgas_reth_rpc::{EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer};
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth::{
@@ -13,7 +11,6 @@ use reth::{
 use reth_exex::ExExEvent;
 use reth_node_ethereum::EthereumNode;
 use std::sync::Arc;
-use ethgas_reth_rpc::{EthApiExt, EthApiOverrideServer};
 
 use clap::Parser;
 use reth::{
@@ -143,9 +140,16 @@ fn main() {
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),
                             ctx.registry.eth_handlers().filter.clone(),
-                            fb,
+                            fb.clone(),
                         );
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+                        // Register the eth_subscribe subscription endpoint for flashblocks
+                        // Uses replace_configured since eth_subscribe already exists from reth's
+                        // standard module Pass eth_api to enable proxying
+                        // standard subscription types to reth's implementation
+                        let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb);
+                        ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
                     } else {
                         info!(message = "flashblocks integration is disabled");
                     }

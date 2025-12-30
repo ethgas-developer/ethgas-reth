@@ -969,9 +969,13 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result
     assert_eq!(sub["id"], 1);
     let subscription_id = sub["result"].as_str().expect("subscription id expected");
 
-    // Send first flashblock (empty)
+    // Send first flashblock (empty) - no notification expected since it has no transactions
     setup.send_flashblock(setup.create_first_payload()).await?;
 
+    // Send second flashblock with transactions
+    setup.send_flashblock(setup.create_second_payload()).await?;
+
+    // Should receive notification for second flashblock
     let notification = ws_stream.next().await.unwrap()?;
     let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
     assert_eq!(notif["method"], "eth_subscription");
@@ -979,16 +983,8 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result
 
     // Result should be an array of transaction hashes (strings)
     let txs = notif["params"]["result"].as_array().expect("expected array of tx hashes");
-    assert_eq!(txs.len(), 0); // No L1 deposit in Ethereum
-
-    // Send second flashblock with more transactions
-    setup.send_flashblock(setup.create_second_payload()).await?;
-
-    let notification2 = ws_stream.next().await.unwrap()?;
-    let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
-    let txs2 = notif2["params"]["result"].as_array().expect("expected array of tx hashes");
-    assert_eq!(txs2.len(), 4);
-    assert!(txs2.iter().all(|tx| tx.is_string()));
+    assert_eq!(txs.len(), 4);
+    assert!(txs.iter().all(|tx| tx.is_string()));
 
     Ok(())
 }
@@ -1020,9 +1016,13 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     assert_eq!(sub["id"], 1);
     let subscription_id = sub["result"].as_str().expect("subscription id expected");
 
-    // Send flashblocks
+    // Send first flashblock (empty) - no notification expected since it has no transactions
     setup.send_flashblock(setup.create_first_payload()).await?;
 
+    // Send second flashblock with transactions
+    setup.send_flashblock(setup.create_second_payload()).await?;
+
+    // Should receive notification for second flashblock
     let notification = ws_stream.next().await.unwrap()?;
     let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
     assert_eq!(notif["method"], "eth_subscription");
@@ -1030,16 +1030,8 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
 
     // Result should be an array of full transaction objects
     let txs = notif["params"]["result"].as_array().expect("expected array of transactions");
-    assert_eq!(txs.len(), 0); // No L1 deposit in Ethereum
-
-    // Send second flashblock with more transactions
-    setup.send_flashblock(setup.create_second_payload()).await?;
-
-    let notification2 = ws_stream.next().await.unwrap()?;
-    let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
-    let txs2 = notif2["params"]["result"].as_array().expect("expected array of transactions");
-    assert_eq!(txs2.len(), 4);
-    assert!(txs2.iter().all(|tx| tx["hash"].is_string() && tx["blockNumber"].is_string()));
+    assert_eq!(txs.len(), 4);
+    assert!(txs.iter().all(|tx| tx["hash"].is_string() && tx["blockNumber"].is_string()));
 
     Ok(())
 }

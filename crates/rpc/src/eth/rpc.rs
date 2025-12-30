@@ -24,10 +24,7 @@ use reth_rpc_eth_api::{
     EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
-use tokio::{
-    sync::{broadcast::error::RecvError},
-    time,
-};
+use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
@@ -136,10 +133,16 @@ where
         if number.is_pending() {
             self.metrics.get_block_by_number.increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            return Ok(pending_blocks.get_block(full));
+            if pending_blocks.as_ref().is_some() {
+                return Ok(pending_blocks.get_block(full));
+            }
+            // No pending state available — treat `pending` as `latest`
+            EthBlocks::rpc_block(&self.eth_api, BlockNumberOrTag::Latest.into(), full)
+                .await
+                .map_err(Into::into)
+        } else {
+            EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
         }
-
-        EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
     }
 
     async fn get_transaction_receipt(

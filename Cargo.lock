@@ -5205,6 +5205,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "node"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-trie",
+ "chrono",
+ "clap",
+ "derive_more",
+ "eyre",
+ "futures",
+ "futures-util",
+ "itertools 0.14.0",
+ "jsonrpsee",
+ "metrics",
+ "metrics-derive",
+ "once_cell",
+ "reqwest",
+ "reth",
+ "reth-cli-util",
+ "reth-db",
+ "reth-exex",
+ "reth-node-builder",
+ "reth-node-ethereum",
+ "reth-primitives",
+ "reth-provider",
+ "reth-rpc-convert",
+ "reth-rpc-eth-api",
+ "revm",
+ "revm-bytecode",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,6 @@
+[package]
+name = "flashblocks-node"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

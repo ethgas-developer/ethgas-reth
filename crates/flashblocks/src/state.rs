@@ -488,6 +488,7 @@ where
                 parent_beacon_block_root: Some(base.parent_beacon_block_root),
                 // TDOD
                 withdrawals: None,
+                extra_data: base.extra_data,
             };
 
             let evm_env = evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;

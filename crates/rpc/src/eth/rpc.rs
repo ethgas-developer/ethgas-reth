@@ -232,8 +232,9 @@ where
         // state hasn't been cleared yet after canonical block commit
         if let Some(canonical_tx) = EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
             .await?
-            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
-            .transpose()?
+            .map(|tx| tx.into_transaction(self.eth_api.converter()))
+            .transpose()
+            .map_err(Eth::Error::from)?
         {
             return Ok(Some(canonical_tx));
         }
@@ -244,10 +245,7 @@ where
             return Ok(Some(fb_transaction));
         }
 
-        Ok(EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
-            .await?
-            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
-            .transpose()?)
+        Ok(None)
     }
 
     async fn send_raw_transaction_sync(
@@ -265,7 +263,7 @@ where
                         "time out too long, timeout: {ms} ms, max: {MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS} ms"
                     ),
                     None::<()>,
-                ))
+                ));
             }
             Some(ms) => ms,
             _ => MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS,

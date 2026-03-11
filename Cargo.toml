@@ -14,57 +14,57 @@ ethgas-reth-rpc = { path = "crates/rpc" }
 test_utils = { path = "crates/test_utils" }
 
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
+reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.2" }
 
 # revm
-revm = { version = "31.0.2", default-features = false }
-revm-bytecode = { version = "7.1.1", default-features = false }
+revm = { version = "34.0.0", default-features = false }
+revm-bytecode = { version = "8.0.0", default-features = false }
 
 # alloy
-alloy-primitives = { version = "1.4.1", default-features = false, features = [
+alloy-primitives = { version = "1.5.0", default-features = false, features = [
     "map-foldhash",
 ] }
-alloy-genesis = { version = "1.0.41", default-features = false }
-alloy-eips = { version = "1.0.41", default-features = false }
-alloy-rpc-types = { version = "1.0.41", default-features = false }
-alloy-rpc-types-engine = { version = "1.0.41", default-features = false }
-alloy-rpc-types-eth = { version = "1.0.41" }
-alloy-consensus = { version = "1.0.41", default-features = false }
+alloy-genesis = { version = "1.5.2", default-features = false }
+alloy-eips = { version = "1.5.2", default-features = false }
+alloy-rpc-types = { version = "1.5.2", default-features = false }
+alloy-rpc-types-engine = { version = "1.5.2", default-features = false }
+alloy-rpc-types-eth = { version = "1.5.2" }
+alloy-consensus = { version = "1.5.2", default-features = false }
 alloy-trie = { version = "0.9.1", default-features = false }
-alloy-provider = { version = "1.0.41" }
-alloy-hardforks = { version = "0.4.4" }
-alloy-rpc-client = { version = "1.0.41" }
-alloy-serde = { version = "1.0.41" }
-alloy-network = { version = "1.0.41" }
+alloy-provider = { version = "1.5.2" }
+alloy-hardforks = { version = "0.4.5" }
+alloy-rpc-client = { version = "1.5.2" }
+alloy-serde = { version = "1.5.2" }
+alloy-network = { version = "1.5.2" }
 
 # tokio
-tokio = { version = "1.44.2", features = ["full"] }
-tokio-stream = "0.1.11"
-tokio-tungstenite = { version = "0.26.2", features = ["native-tls"] }
+tokio = { version = "1.48.0", features = ["full"] }
+tokio-stream = "0.1.17"
+tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
 
 # async
 futures = "0.3"
 futures-util = "0.3"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.13.1", features = ["json", "stream"] }
 
 # rpc
 jsonrpsee = "0.26.0"

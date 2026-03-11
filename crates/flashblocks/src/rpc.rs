@@ -260,8 +260,9 @@ where
 
         Ok(EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
             .await?
-            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
-            .transpose()?)
+            .map(|tx| tx.into_transaction(self.eth_api.converter()))
+            .transpose()
+            .map_err(Eth::Error::from)?)
     }
 
     async fn send_raw_transaction_sync(

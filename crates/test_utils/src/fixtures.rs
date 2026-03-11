@@ -1,15 +1,22 @@
+
 use std::sync::Arc;
 
+use alloy_genesis::Genesis;
 use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
     test_utils::{ERROR_DB_CREATION, TempDatabase, create_test_static_files_dir, tempdir_path},
 };
-
 use reth_provider::{ProviderFactory, providers::StaticFileProvider};
 
-pub fn create_test_provider_factory<N: NodeTypes>(
+/// Loads the shared test genesis configuration.
+pub fn load_genesis() -> Genesis {
+    serde_json::from_str(include_str!("../assets/genesis.json")).unwrap()
+}
+
+/// Creates a provider factory for tests with the given chain spec.
+pub fn create_provider_factory<N: NodeTypes>(
     chain_spec: Arc<N::ChainSpec>,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
     let (static_dir, _) = create_test_static_files_dir();
@@ -21,6 +28,7 @@ pub fn create_test_provider_factory<N: NodeTypes>(
     )
 }
 
+/// Creates a temporary test database.
 fn create_test_db() -> Arc<TempDatabase<DatabaseEnv>> {
     let path = tempdir_path();
     let emsg = format!("{ERROR_DB_CREATION}: {path:?}");

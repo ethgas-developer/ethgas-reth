@@ -5,7 +5,7 @@ use std::{io::Read, sync::Arc, time::Duration};
 
 use crate::{
     metrics::Metrics,
-    payload::{FlashBlock, FlashblocksPayloadV1, Metadata},
+    payload::{Flashblock, FlashblocksPayloadV1, Metadata},
 };
 use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -17,13 +17,13 @@ pub const PING_INTERVAL_MS: u64 = 500;
 pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
 
 pub trait FlashblocksReceiver {
-    fn on_flashblock_received(&self, flashblock: FlashBlock);
+    fn on_flashblock_received(&self, flashblock: Flashblock);
 }
 
 // Simplify actor messages to just handle shutdown
 #[derive(Debug)]
 enum ActorMessage {
-    BestPayload { payload: FlashBlock },
+    BestPayload { payload: Flashblock },
 }
 
 pub struct FlashblocksSubscriber<Receiver> {
@@ -189,16 +189,16 @@ async fn sleep(metrics: &Metrics, backoff: Duration) -> Duration {
     std::cmp::min(backoff * 2, MAX_BACKOFF)
 }
 
-fn try_decode_message(bytes: &[u8]) -> eyre::Result<FlashBlock> {
+fn try_decode_message(bytes: &[u8]) -> eyre::Result<Flashblock> {
     let text = try_parse_message(bytes)?;
     parse_flashblock_json(&text)
 }
 
-fn try_decode_plaintext_message(text: &str) -> eyre::Result<FlashBlock> {
+fn try_decode_plaintext_message(text: &str) -> eyre::Result<Flashblock> {
     parse_flashblock_json(text)
 }
 
-fn parse_flashblock_json(text: &str) -> eyre::Result<FlashBlock> {
+fn parse_flashblock_json(text: &str) -> eyre::Result<Flashblock> {
     let payload: FlashblocksPayloadV1 = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(e) => {
@@ -213,7 +213,7 @@ fn parse_flashblock_json(text: &str) -> eyre::Result<FlashBlock> {
         }
     };
 
-    Ok(FlashBlock {
+    Ok(Flashblock {
         payload_id: payload.payload_id,
         index: payload.index,
         base: payload.base,

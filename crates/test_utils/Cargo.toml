@@ -1,12 +1,15 @@
 [package]
-name = "ethgas-reth-flashblocks"
+name = "test_utils"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ethgas-reth-flashblocks.workspace = true
+ethgas-reth-rpc.workspace = true
+
 # reth
 reth.workspace = true
-revm.workspace = true
+reth-ipc.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-evm.workspace = true
 reth-rpc-convert.workspace = true
@@ -18,6 +21,10 @@ reth-evm-ethereum.workspace = true
 reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-exex.workspace = true
+reth-rpc.workspace = true
+reth-db.workspace = true
+reth-rpc-layer.workspace = true
+reth-e2e-test-utils.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
@@ -31,6 +38,11 @@ alloy-genesis.workspace = true
 alloy-rpc-client.workspace = true
 alloy-serde.workspace = true
 alloy-network.workspace = true
+alloy-signer = "1.0"
+alloy-signer-local = "1.1.0"
+alloy-sol-macro = { version = "1.4.1", features = ["json"] }
+alloy-sol-types = "1.4.1"
+alloy-contract = "1.0"
 
 # tokio
 tokio.workspace = true
@@ -54,6 +66,11 @@ metrics-derive.workspace = true
 eyre.workspace = true
 brotli.workspace = true
 arc-swap.workspace = true
+tower = "0.5"
+derive_more = "2.1.0"
+tracing-subscriber.workspace = true
+chrono.workspace = true
+once_cell.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
@@ -61,4 +78,3 @@ reth-db.workspace = true
 reth-testing-utils.workspace = true
 reth-db-common.workspace = true
 reth-e2e-test-utils.workspace = true
-test_utils.workspace = true

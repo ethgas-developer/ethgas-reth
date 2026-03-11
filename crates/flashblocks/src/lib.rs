@@ -1,7 +1,7 @@
 pub mod metrics;
 pub mod payload;
 pub mod pending;
-pub mod rpc;
+pub mod traits;
 pub mod service;
 pub mod state;
 

@@ -1,23 +1,24 @@
 [package]
-name = "ethgas-reth-flashblocks"
+name = "ethgas-node"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
+# internal
+ethgas-reth-flashblocks.workspace = true
+ethgas-reth-rpc.workspace = true
+
 # reth
 reth.workspace = true
-revm.workspace = true
-reth-rpc-eth-api.workspace = true
-reth-evm.workspace = true
-reth-rpc-convert.workspace = true
-reth-provider.workspace = true
-reth-tracing.workspace = true
-reth-ethereum-primitives.workspace = true
-reth-node-ethereum.workspace = true
-reth-evm-ethereum.workspace = true
 reth-primitives.workspace = true
-reth-primitives-traits.workspace = true
-reth-exex.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc-convert.workspace = true
+reth-cli-util.workspace = true
+reth-node-ethereum.workspace = true
+
+# revm
+revm.workspace = true
+revm-bytecode.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
@@ -26,11 +27,9 @@ alloy-rpc-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
+alloy-trie.workspace = true
 alloy-provider.workspace = true
-alloy-genesis.workspace = true
-alloy-rpc-client.workspace = true
-alloy-serde.workspace = true
-alloy-network.workspace = true
+alloy-hardforks.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -38,27 +37,31 @@ tokio-stream.workspace = true
 tokio-tungstenite.workspace = true
 
 # async
+futures.workspace = true
 futures-util.workspace = true
+reqwest.workspace = true
+
+# reth-exex
+reth-exex.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
-jsonrpsee-types.workspace = true
 
 # misc
+clap.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 url.workspace = true
 metrics.workspace = true
 metrics-derive.workspace = true
+itertools.workspace = true
 eyre.workspace = true
-brotli.workspace = true
-arc-swap.workspace = true
+uuid.workspace = true
+time.workspace = true
+chrono.workspace = true
+once_cell.workspace = true
 
-[dev-dependencies]
-rand.workspace = true
-reth-db.workspace = true
-reth-testing-utils.workspace = true
-reth-db-common.workspace = true
-reth-e2e-test-utils.workspace = true
-test_utils.workspace = true
+[features]
+default = []
+jemalloc = ["reth-cli-util/jemalloc"]

@@ -1,0 +1,84 @@
+[package]
+name = "ethgas-node-runner"
+version.workspace = true
+edition.workspace = true
+
+[features]
+test-utils = [
+    "dep:ethgas-test-utils",
+    "dep:alloy-consensus",
+    "dep:alloy-eips",
+    "dep:alloy-genesis",
+    "dep:alloy-primitives",
+    "dep:alloy-provider",
+    "dep:alloy-rpc-client",
+    "dep:alloy-rpc-types",
+    "dep:alloy-rpc-types-engine",
+    "dep:alloy-rpc-types-eth",
+    "dep:alloy-signer",
+    "dep:alloy-signer-local",
+    "dep:jsonrpsee",
+    "dep:reth-chainspec",
+    "dep:reth-ethereum-primitives",
+    "dep:reth-ipc",
+    "dep:reth-node-builder",
+    "dep:reth-node-core",
+    "dep:reth-primitives-traits",
+    "dep:reth-provider",
+    "dep:reth-rpc-api",
+    "dep:reth-rpc-layer",
+    "dep:reth-tasks",
+    "dep:reth-transaction-pool",
+    "dep:tracing-subscriber",
+    "dep:tokio",
+]
+
+[dependencies]
+# internal
+ethgas-cli-utils.workspace = true
+ethgas-test-utils = { workspace = true, optional = true }
+
+# reth
+reth.workspace = true
+reth-node-ethereum.workspace = true
+reth-exex.workspace = true
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-chainspec = { workspace = true, optional = true }
+reth-ethereum-primitives = { workspace = true, optional = true }
+reth-ipc = { workspace = true, optional = true }
+reth-node-builder = { workspace = true, optional = true }
+reth-node-core = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
+reth-provider = { workspace = true, optional = true }
+reth-rpc-api = { workspace = true, optional = true }
+reth-rpc-layer = { workspace = true, optional = true }
+reth-tasks = { workspace = true, optional = true }
+reth-transaction-pool = { workspace = true, optional = true, features = ["test-utils"] }
+
+# alloy (optional - test-utils only)
+alloy-consensus = { workspace = true, optional = true }
+alloy-eips = { workspace = true, optional = true, features = ["std"] }
+alloy-genesis = { workspace = true, optional = true, features = ["std"] }
+alloy-primitives = { workspace = true, optional = true }
+alloy-provider = { workspace = true, optional = true }
+alloy-rpc-client = { workspace = true, optional = true }
+alloy-rpc-types = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, optional = true }
+alloy-signer = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
+
+# rpc
+jsonrpsee = { workspace = true, optional = true }
+
+# async
+futures.workspace = true
+tokio = { workspace = true, optional = true }
+
+# misc
+eyre.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
+
+[dev-dependencies]
+ethgas-node-runner = { path = ".", features = ["test-utils"] }

@@ -3171,6 +3171,7 @@ dependencies = [
  "brotli",
  "derive_more",
  "ethgas-node-runner",
+ "ethgas-reth-flashblocks",
  "eyre",
  "futures",
  "futures-util",

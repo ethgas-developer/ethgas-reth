@@ -73,6 +73,7 @@ derive_more = { version = "2", optional = true, features = ["deref"] }
 reth-transaction-pool = { workspace = true, optional = true, features = ["test-utils"] }
 
 [dev-dependencies]
+ethgas-reth-flashblocks = { path = ".", features = ["test-utils"] }
 rand.workspace = true
 rstest.workspace = true
 reth-db.workspace = true

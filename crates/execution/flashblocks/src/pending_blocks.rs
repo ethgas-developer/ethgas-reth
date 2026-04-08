@@ -27,10 +27,11 @@ use crate::{
     traits::PendingBlocksAPI,
 };
 
-/// A full transaction object with its associated logs.
+/// A full transaction object with its associated logs and gas usage.
 ///
-/// This is returned by `newFlashblockTransactions` subscription when `full = true`,
-/// providing both the transaction details and logs emitted by its execution.
+/// This is returned by `newFlashblockTransactions` subscription when `full = true`
+/// or when a log filter is provided, giving both the transaction details, logs emitted
+/// by its execution, and gas accounting fields.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithLogs {
@@ -39,6 +40,8 @@ pub struct TransactionWithLogs {
     pub transaction: Transaction,
     /// Logs emitted by this transaction.
     pub logs: Vec<Log>,
+    /// Gas consumed by this transaction's execution.
+    pub gas_used: Option<u64>,
 }
 
 /// Builder for [`PendingBlocks`].
@@ -415,12 +418,12 @@ impl PendingBlocks {
             .iter()
             .map(|tx| {
                 let tx_hash = tx.tx_hash();
-                let logs = self
+                let (logs, gas_used) = self
                     .transaction_receipts
                     .get(&tx_hash)
-                    .map(|receipt| receipt.inner.logs().to_vec())
+                    .map(|receipt| (receipt.inner.logs().to_vec(), Some(receipt.gas_used)))
                     .unwrap_or_default();
-                TransactionWithLogs { transaction: tx.clone(), logs }
+                TransactionWithLogs { transaction: tx.clone(), logs, gas_used }
             })
             .collect()
     }
@@ -477,12 +480,45 @@ impl PendingBlocks {
             .skip(prev_count)
             .map(|tx| {
                 let tx_hash = tx.tx_hash();
-                let logs = self
+                let (logs, gas_used) = self
                     .transaction_receipts
                     .get(&tx_hash)
-                    .map(|receipt| receipt.inner.logs().to_vec())
+                    .map(|receipt| (receipt.inner.logs().to_vec(), Some(receipt.gas_used)))
                     .unwrap_or_default();
-                TransactionWithLogs { transaction: tx.clone(), logs }
+                TransactionWithLogs { transaction: tx.clone(), logs, gas_used }
+            })
+            .collect()
+    }
+
+    /// Returns transactions with their associated logs from only the latest flashblock (delta),
+    /// filtered to include only transactions where at least one log matches the given filter.
+    ///
+    /// When a transaction matches, all of its logs are returned (not just the matching ones).
+    /// This preserves full transaction context for subscribers who need complete log sets.
+    pub fn get_latest_flashblock_transactions_with_logs_filtered(
+        &self,
+        filter: &Filter,
+    ) -> Vec<TransactionWithLogs> {
+        let prev_count = self.previous_flashblocks_tx_count();
+
+        self.transactions
+            .iter()
+            .skip(prev_count)
+            .filter_map(|tx| {
+                let tx_hash = tx.tx_hash();
+                let receipt = self.transaction_receipts.get(&tx_hash)?;
+                let logs = receipt.inner.logs();
+
+                let has_match = logs.iter().any(|log| filter.matches(&log.inner));
+                if !has_match {
+                    return None;
+                }
+
+                Some(TransactionWithLogs {
+                    transaction: tx.clone(),
+                    logs: logs.to_vec(),
+                    gas_used: Some(receipt.gas_used),
+                })
             })
             .collect()
     }

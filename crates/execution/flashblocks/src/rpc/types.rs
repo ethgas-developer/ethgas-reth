@@ -59,10 +59,13 @@ pub enum FlashblocksSubscriptionKind {
     /// confidence than standard `newPendingTransactions` which returns mempool transactions.
     /// Flashblock transactions have been included by the sequencer and are effectively preconfirmed.
     ///
-    /// Accepts an optional boolean parameter:
+    /// Accepts an optional parameter:
     /// - `true`: Returns full transaction objects with their associated logs (as
     ///   [`TransactionWithLogs`](crate::TransactionWithLogs))
     /// - `false` (default): Returns only transaction hashes
+    /// - A log filter object (with `address` and/or `topics`): Returns full transaction objects
+    ///   where at least one log matches the filter. All logs are included in the response, not
+    ///   just the matching ones.
     NewFlashblockTransactions,
 }
 

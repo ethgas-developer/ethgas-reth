@@ -23,7 +23,7 @@ use reth::{
     rpc::server_types::eth::receipt::build_receipt,
 };
 use reth_ethereum_primitives::Block;
-use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes};
+use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes, block::SystemCaller};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_primitives::EthereumHardforks;
 use reth_primitives_traits::RecoveredBlock;
@@ -60,7 +60,6 @@ pub struct StateProcessor<Client> {
     rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     max_depth: u64,
-    simulate_state_root: bool,
     metrics: Metrics,
     client: Client,
     chain_spec: Arc<ChainSpec>,
@@ -81,7 +80,6 @@ where
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         max_depth: u64,
-        simulate_state_root: bool,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         chain_spec: Arc<ChainSpec>,
         sender: Sender<Arc<PendingBlocks>>,
@@ -95,7 +93,6 @@ where
             pending_blocks,
             client,
             max_depth,
-            simulate_state_root,
             rx,
             chain_spec,
             sender,
@@ -438,6 +435,20 @@ where
                 .next_evm_env(&last_block_header, &block_env_attributes)
                 .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
             let mut evm = evm_config.evm_with_env(db, evm_env);
+
+            // Apply EIP-4788 (beacon root) and EIP-2935 (blockhashes) pre-execution
+            // system calls so cached execution matches what the validator computes.
+            let parent_hash = last_block_header.hash_slow();
+            let mut system_caller = SystemCaller::new(self.chain_spec.clone());
+            system_caller
+                .apply_blockhashes_contract_call(parent_hash, &mut evm)
+                .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
+            system_caller
+                .apply_beacon_root_contract_call(
+                    Some(base.parent_beacon_block_root),
+                    &mut evm,
+                )
+                .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
 
             let mut gas_used = 0;
             let mut next_log_index = 0;

@@ -1,11 +1,11 @@
 //! Type aliases for the Ethereum node builder.
 
-use reth::builder::{
+use reth_node_builder::{
     FullNodeTypesAdapter, Node, NodeBuilder, NodeComponentsBuilder, NodeTypesWithDBAdapter,
     WithLaunchContext,
 };
-use reth::chainspec::ChainSpec;
-use reth::providers::providers::BlockchainProvider;
+use reth_chainspec::ChainSpec;
+use reth_provider::providers::BlockchainProvider;
 use reth_node_ethereum::EthereumNode;
 
 /// The database environment type used by the node.

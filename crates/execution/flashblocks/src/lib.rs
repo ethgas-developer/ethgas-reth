@@ -17,9 +17,6 @@ pub use pending_blocks::{PendingBlocks, PendingBlocksBuilder, TransactionWithLog
 pub mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 
-pub mod state_builder;
-pub use state_builder::{ExecutedPendingTransaction, PendingStateBuilder};
-
 mod block_assembler;
 pub use block_assembler::{AssembledBlock, BlockAssembler};
 
@@ -43,12 +40,3 @@ pub use rpc::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
     ExtendedSubscriptionKind, FlashblocksSubscriptionKind,
 };
-
-mod extension;
-pub use extension::FlashblocksExtension;
-
-#[cfg(feature = "test-utils")]
-pub mod test_harness;
-
-#[cfg(test)]
-mod tests;

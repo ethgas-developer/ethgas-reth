@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 # reth
-reth.workspace = true
+reth-node-core.workspace = true
 
 # cli
 clap = { workspace = true, features = ["derive"] }

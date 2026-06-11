@@ -11,19 +11,47 @@
 //! - `MockERC20`: Solmate's `MockERC20` (lib/solmate)
 //! - `TransparentUpgradeableProxy`: `OpenZeppelin`'s proxy (lib/openzeppelin-contracts)
 
+use alloy_consensus::TxType;
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, B256, Bytes, U256, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, Bytes, TxHash, U256, keccak256, map::foldhash::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types_engine::PayloadId;
-use alloy_sol_types::{SolConstructor, SolValue};
+use alloy_sol_types::{SolCall, SolConstructor, SolValue};
 use ethgas_node_runner::test_utils::{Account, MockERC20, TransparentUpgradeableProxy};
-use ethgas_reth_flashblocks::{
-    payload::{
-        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
-    },
-    test_harness::FlashblocksHarness,
+use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
+use ethgas_reth_flashblocks::payload::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
 };
 use eyre::Result;
+use reth_ethereum_primitives::Receipt;
+
+/// Builds a synthetic receipt per transaction, keyed by the EIP-2718 tx hash
+/// (`keccak256` of the encoded typed transaction). Our flashblock format carries receipts in
+/// metadata and the processor requires one per transaction.
+fn metadata_receipts(transactions: &[Bytes]) -> HashMap<TxHash, Receipt> {
+    metadata_receipts_from(transactions, 0)
+}
+
+/// Like [`metadata_receipts`], but continues the cumulative gas from `start_cumulative_gas`.
+///
+/// Receipts must stay monotonic across the flashblocks of a single block: the processor derives
+/// per-transaction gas as `receipt.cumulative_gas_used() - running_total`, which underflows (and
+/// kills the processing task) if a later flashblock's receipts restart their cumulative from zero.
+fn metadata_receipts_from(
+    transactions: &[Bytes],
+    start_cumulative_gas: u64,
+) -> HashMap<TxHash, Receipt> {
+    let mut receipts = HashMap::default();
+    let mut cumulative_gas_used = start_cumulative_gas;
+    for tx in transactions {
+        cumulative_gas_used += 350_000;
+        receipts.insert(
+            keccak256(tx.as_ref()),
+            Receipt { tx_type: TxType::Eip1559, success: true, cumulative_gas_used, logs: vec![] },
+        );
+    }
+    receipts
+}
 
 struct Erc20TestSetup {
     harness: FlashblocksHarness,
@@ -55,7 +83,9 @@ impl Erc20TestSetup {
             let proxy_constructor = TransparentUpgradeableProxy::constructorCall {
                 _logic: token_address,
                 initialOwner: deployer.address(),
-                _data: Bytes::new(),
+                // Our compiled OZ proxy reverts `ERC1967ProxyUninitialized()` when deployed with
+                // empty data, so seed it with a harmless view call (`name()`) as the initializer.
+                _data: Bytes::from(MockERC20::nameCall {}.abi_encode()),
             };
             let proxy_deploy_data =
                 [TransparentUpgradeableProxy::BYTECODE.to_vec(), proxy_constructor.abi_encode()]
@@ -106,6 +136,7 @@ impl Erc20TestSetup {
         if let Some(proxy_tx) = &self.proxy_deploy_tx {
             transactions.push(proxy_tx.clone());
         }
+        let receipts = metadata_receipts(&transactions);
 
         FlashBlock {
             payload_id: PayloadId::new([0; 8]),
@@ -124,7 +155,7 @@ impl Erc20TestSetup {
             },
             metadata: Metadata {
                 block_number: 1,
-                receipts: HashMap::default(),
+                receipts,
                 new_account_balances: HashMap::default(),
             },
         }
@@ -132,6 +163,9 @@ impl Erc20TestSetup {
 
     /// Create flashblock payload with mint transaction
     fn create_mint_payload(&self, mint_tx: Bytes) -> FlashBlock {
+        // The mint flashblock follows the deployment flashblock, so its receipt's cumulative gas
+        // must continue past the token (and optional proxy) deployment transactions.
+        let prior_deploy_txs = 1 + u64::from(self.proxy_deploy_tx.is_some());
         FlashBlock {
             payload_id: PayloadId::new([0; 8]),
             index: 2,
@@ -142,14 +176,17 @@ impl Erc20TestSetup {
                 gas_used: 750_000,
                 block_hash: B256::default(),
                 blob_gas_used: 0,
-                transactions: vec![mint_tx],
+                transactions: vec![mint_tx.clone()],
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
                 excess_blob_gas: 0,
             },
             metadata: Metadata {
                 block_number: 1,
-                receipts: HashMap::default(),
+                receipts: metadata_receipts_from(
+                    std::slice::from_ref(&mint_tx),
+                    prior_deploy_txs * 350_000,
+                ),
                 new_account_balances: HashMap::default(),
             },
         }
@@ -248,7 +285,13 @@ async fn test_erc20_mint() -> Result<()> {
     Ok(())
 }
 
-/// Test ERC-20 mint through `TransparentUpgradeableProxy`
+/// Test ERC-20 mint through `TransparentUpgradeableProxy`.
+///
+/// Exercises a deploy → mint → read sequence entirely through the proxy in pending flashblocks
+/// state. Two fixture details matter: the proxy must be seeded with non-empty initializer `_data`
+/// (our compiled OZ proxy reverts `ERC1967ProxyUninitialized()` otherwise — see `new`), and the
+/// mint receipt's cumulative gas must stay monotonic across the deploy flashblock (see
+/// `create_mint_payload` / `metadata_receipts_from`).
 #[tokio::test]
 async fn test_proxy_erc20_mint() -> Result<()> {
     let setup = Erc20TestSetup::new(true).await?;

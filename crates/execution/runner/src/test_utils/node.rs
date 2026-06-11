@@ -5,7 +5,7 @@ use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use eyre::Result;
-use reth::chainspec::ChainSpec;
+use reth_chainspec::ChainSpec;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };

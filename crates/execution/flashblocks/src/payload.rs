@@ -1,7 +1,7 @@
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
-use reth_primitives::Receipt;
+use reth_ethereum_primitives::Receipt;
 use serde::{Deserialize, Serialize};
 
 /// Represents a Flashblock, a real-time block-like structure received from helix relay.

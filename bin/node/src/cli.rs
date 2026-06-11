@@ -18,18 +18,12 @@ pub struct Args {
         default_value = "3"
     )]
     pub max_pending_blocks_depth: u64,
-
-    /// Enable cached execution via the flashblocks-aware engine validator.
-    #[arg(long = "flashblocks.cached-execution", requires = "flashblocks_url")]
-    pub flashblocks_cached_execution: bool,
 }
 
 impl From<&Args> for Option<FlashblocksConfig> {
     fn from(args: &Args) -> Self {
-        args.flashblocks_url.clone().map(|url| {
-            let mut config = FlashblocksConfig::new(url, args.max_pending_blocks_depth);
-            config.cached_execution = args.flashblocks_cached_execution;
-            config
-        })
+        args.flashblocks_url
+            .clone()
+            .map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth))
     }
 }

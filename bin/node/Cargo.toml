@@ -6,11 +6,12 @@ edition.workspace = true
 [dependencies]
 # internal
 ethgas-reth-flashblocks.workspace = true
+ethgas-flashblocks-node.workspace = true
 ethgas-node-runner.workspace = true
 ethgas-cli-utils.workspace = true
 
 # reth
-reth.workspace = true
+reth-ethereum-cli.workspace = true
 reth-cli-util.workspace = true
 
 # misc

@@ -43,9 +43,8 @@ RUST_LOG=info,ethgas_reth_flashblocks=debug \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--flashblocks-url <URL>` | WebSocket endpoint streaming flashblock updates. Enables flashblocks when set. | _disabled_ |
+| `--flashblocks-url <URL>` | WebSocket endpoint streaming flashblock updates (alias `--websocket-url`). Enables flashblocks when set. | _disabled_ |
 | `--max-pending-blocks-depth <N>` | Max pending blocks to retain in memory. | `3` |
-| `--flashblocks.cached-execution` | Enable cached execution via the flashblocks-aware engine validator. Requires `--flashblocks-url`. | `false` |
 
 When `--flashblocks-url` is set, requests with the `pending` block tag are
 served from flashblock-derived state, and the following extra subscriptions are

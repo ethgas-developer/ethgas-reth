@@ -1,5 +1,5 @@
 use metrics::gauge;
-use reth::version::{
+use reth_node_core::version::{
     RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata,
 };
 

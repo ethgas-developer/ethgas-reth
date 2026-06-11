@@ -62,7 +62,10 @@ pub fn build_test_genesis() -> Genesis {
         config,
         alloc,
         gas_limit: GENESIS_GAS_LIMIT,
-        base_fee_per_gas: Some(1_000_000_000),
+        // Keep the base fee well below the test transactions' `max_fee_per_gas` (1 gwei) so the
+        // EIP-1559-derived next-block base fee can never exceed the cap and reject inclusion.
+        // Effective gas price stays capped at the tx `max_fee`, so gas costs are unchanged.
+        base_fee_per_gas: Some(100),
         difficulty: U256::ZERO,
         nonce: 0,
         timestamp: 1,

@@ -4,6 +4,7 @@
 //! from flashblocks.
 
 use alloy_consensus::{Header, Sealable};
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Bytes, Sealed};
 use alloy_rpc_types::Withdrawal;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
@@ -89,9 +90,13 @@ impl BlockAssembler {
             },
         };
 
-        let block: Block = execution_payload
+        let mut block: Block = execution_payload
             .try_into_block()
             .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
+
+        // TODO: ExecutionPayloadV3 carries neither the parent beacon block root nor the requests hash
+        block.header.parent_beacon_block_root = Some(base.parent_beacon_block_root);
+        block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
 
         let sealed_header = block.header.clone().seal_slow();
 

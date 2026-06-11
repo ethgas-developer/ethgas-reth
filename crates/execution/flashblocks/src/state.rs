@@ -4,10 +4,8 @@ use std::sync::Arc;
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
-use reth::{
-    chainspec::{ChainSpec, ChainSpecProvider},
-    providers::{BlockReaderIdExt, StateProviderFactory},
-};
+use reth_chainspec::{ChainSpec, ChainSpecProvider};
+use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use reth_ethereum_primitives::Block;
 use reth_primitives_traits::RecoveredBlock;
 use tokio::sync::{

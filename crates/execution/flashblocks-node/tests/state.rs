@@ -1,48 +1,38 @@
 #[cfg(test)]
 mod tests {
-    use crate::{
-        payload::{
-            ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
-        },
-        traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI},
-        state::FlashblocksState,
-        tests::utils::create_test_provider_factory,
+    use ethgas_reth_flashblocks::{
+        FlashblocksAPI, FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
+        payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata},
     };
-    use alloy_consensus::{
-        BlockBody, BlockHeader, Header, Transaction, TxType,
-        crypto::secp256k1::public_key_to_address,
-    };
+    use alloy_consensus::{BlockBody, BlockHeader, Header, Transaction, TxType};
     use alloy_eips::{BlockHashOrNumber, Encodable2718};
-    use alloy_genesis::{Genesis, GenesisAccount};
+    use alloy_genesis::Genesis;
     use alloy_primitives::{
         Address, B256, BlockNumber, Bytes, TxHash, U256, address, b256, bytes,
         map::foldhash::HashMap,
     };
     use alloy_provider::network::BlockResponse;
-    use alloy_rpc_types::TransactionReceipt;
     use alloy_rpc_types_engine::PayloadId;
-    use reth::{
-        builder::NodeTypesWithDBAdapter,
-        chainspec::{Chain, ChainSpec, ChainSpecBuilder, EthChainSpec, MAINNET},
-        providers::{AccountReader, BlockNumReader, BlockReader},
-        revm::database::StateProviderDatabase,
-        transaction_pool::test_utils::TransactionBuilder,
-    };
+    use reth_chainspec::{ChainSpec, EthChainSpec};
+    use reth_node_api::NodeTypesWithDBAdapter;
+    use reth_provider::{AccountReader, BlockNumReader, BlockReader};
+    use reth_chain_state::{ComputedTrieData, ExecutedBlock, NewCanonicalChain};
+    use reth_revm::database::StateProviderDatabase;
+    use reth_transaction_pool::test_utils::TransactionBuilder;
     use reth_db::{DatabaseEnv, test_utils::TempDatabase};
     use std::str::FromStr;
 
-    use reth_ethereum_primitives::{Block as EthBlock, Receipt};
+    use reth_ethereum_primitives::{Block as EthBlock, Receipt, TransactionSigned};
     use reth_evm::{ConfigureEvm, execute::Executor};
     use reth_evm_ethereum::EthEvmConfig;
     use reth_node_ethereum::EthereumNode;
-    use reth_primitives::TransactionSigned;
     use reth_primitives_traits::{Account, Block, RecoveredBlock, SealedHeader};
     use reth_provider::{
         BlockWriter, ChainSpecProvider, ExecutionOutcome, LatestStateProviderRef, ProviderFactory,
         StateProviderFactory,
         providers::BlockchainProvider, test_utils::create_test_provider_factory_with_node_types,
     };
-    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+    use std::{sync::Arc, time::Duration};
     use tokio::time::sleep;
 
     const TRANSFER_ETH_HASH: TxHash =
@@ -218,8 +208,22 @@ mod tests {
                 .unwrap();
             provider_rw.commit().unwrap();
 
-            self.flashblocks.on_canonical_block_received(&block);
+            // Advance the `BlockchainProvider`'s in-memory canonical state so `latest()` (and hence
+            // `basic_account`) reflects the new block. Under reth v2 the manual `provider_rw` commit
+            // alone does not update the in-memory head, leaving canonical reads stale at genesis.
+            let executed = ExecutedBlock::new(
+                Arc::new(block.clone()),
+                Arc::new(block_execution_output),
+                ComputedTrieData::default(),
+            );
+            self.provider
+                .canonical_in_memory_state()
+                .update_chain(NewCanonicalChain::Commit { new: vec![executed] });
 
+            // NOTE: this method intentionally does NOT notify the StateProcessor
+            // (`on_canonical_block_received`). It only commits the block to the underlying chain so
+            // tests can reproduce the race where `latest` advanced but pending state is not yet
+            // reconciled. The `new_canonical_block` wrapper performs the notification.
             block
         }
 
@@ -246,7 +250,8 @@ mod tests {
             let genesis: Genesis =
                 serde_json::from_str(include_str!("assets/genesis.json")).unwrap();
             let chainspec = Arc::new(ChainSpec::from_genesis(genesis));
-            let factory = create_test_provider_factory::<EthereumNode>(chainspec.clone());
+            let factory =
+                create_test_provider_factory_with_node_types::<EthereumNode>(chainspec.clone());
             assert!(reth_db_common::init::init_genesis(&factory).is_ok());
 
             let provider =
@@ -602,10 +607,16 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(1000000000000000000100000u128)
+            // Pending blocks stack: Bob received 100k in block N and another 100k in block N+1.
+            U256::from(1000000000000000000200000u128)
         );
     }
 
+    // Exercises canonical reconciliation: after a canonical block arrives, only the matching pending
+    // state is cleared and the remaining pending flashblock delta is restacked on the new canonical
+    // balance. Requires the harness to advance the `BlockchainProvider`'s in-memory canonical head
+    // (see `new_canonical_block_without_processing`), since the manual `provider_rw` commit alone
+    // does not under reth v2.
     #[tokio::test]
     async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         reth_tracing::init_test_tracing();
@@ -681,7 +692,7 @@ mod tests {
         let pending = test.flashblocks.get_pending_blocks().get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
-        assert_eq!(pending.transactions.len(), 1);
+        assert_eq!(pending.transactions.len(), 2);
 
         let overrides =
             test.flashblocks.get_pending_blocks().get_state_overrides().expect("should be set from txn execution");
@@ -693,7 +704,8 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(1000000000000000000100000u128)
+            // Pending blocks stack: Bob received 100k in block N and another 100k in block N+1.
+            U256::from(1000000000000000000200000u128)
         );
 
         test.new_canonical_block(vec![test.build_transaction_to_send_eth_with_nonce(
@@ -707,7 +719,7 @@ mod tests {
         let pending = test.flashblocks.get_pending_blocks().get_block(true);
         assert!(pending.is_some());
         let pending = pending.unwrap();
-        assert_eq!(pending.transactions.len(), 1);
+        assert_eq!(pending.transactions.len(), 2);
 
         let overrides =
             test.flashblocks.get_pending_blocks().get_state_overrides().expect("should be set from txn execution");
@@ -719,7 +731,10 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(1000000000000000000100000u128)
+            // After reconciliation Bob's pending balance is his *canonical* balance plus the
+            // surviving flashblock delta: genesis + 100 (received in the canonical block) + 100_000
+            // (the still-pending flashblock transfer). Mirrors base's `expected_pending_balance`.
+            U256::from(1000000000000000000100100u128)
         );
     }
 
@@ -889,6 +904,10 @@ mod tests {
         assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
     }
 
+    // Reproduces the nonce double-count race: `new_canonical_block_without_processing` advances the
+    // `BlockchainProvider`'s in-memory canonical head (so `basic_account(...).nonce` reflects the new
+    // block) while intentionally leaving the pending state un-reconciled, so `onchain_nonce +
+    // pending_txn_count` transiently double-counts until reconciliation runs.
     #[tokio::test]
     async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
         // Test for race condition when a canon block comes in but user

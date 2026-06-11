@@ -17,6 +17,7 @@ use jsonrpsee::{
     server::SubscriptionMessage,
 };
 use reth_rpc::eth::EthPubSub as RethEthPubSub;
+use reth_tasks::Runtime;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
     pubsub::EthPubSubApiServer as RethEthPubSubApiServer,
@@ -68,8 +69,18 @@ pub struct EthPubSub<Eth, FB> {
 
 impl<Eth, FB> EthPubSub<Eth, FB> {
     /// Creates a new instance with the given eth API and flashblocks state.
-    pub fn new(eth_api: Eth, flashblocks_state: Arc<FB>) -> Self {
-        Self { inner: RethEthPubSub::new(eth_api), flashblocks_state }
+    ///
+    /// `subscription_task_spawner` is the runtime reth's [`RethEthPubSub`] uses to spawn
+    /// subscription handler tasks (added as a required argument in reth v2).
+    pub fn new(
+        eth_api: Eth,
+        subscription_task_spawner: Runtime,
+        flashblocks_state: Arc<FB>,
+    ) -> Self {
+        Self {
+            inner: RethEthPubSub::new(eth_api, subscription_task_spawner),
+            flashblocks_state,
+        }
     }
 
     /// Returns a stream that yields all new flashblocks as RPC blocks

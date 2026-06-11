@@ -7,7 +7,7 @@ use std::fmt;
 
 use eyre::Result;
 use futures::future::BoxFuture;
-use reth::builder::{
+use reth_node_builder::{
     NodeAdapter, NodeBuilderWithComponents, NodeComponentsBuilder, WithLaunchContext,
     node::FullNode,
     rpc::{RethRpcAddOns, RpcContext},

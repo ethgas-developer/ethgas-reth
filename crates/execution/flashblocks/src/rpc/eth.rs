@@ -1,6 +1,6 @@
 //! RPC trait definitions and implementations for flashblocks.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_network::Ethereum;
@@ -16,22 +16,19 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth::{
-    providers::CanonStateSubscriptions,
-    rpc::{eth::EthFilter, server_types::eth::EthApiError},
-};
+use reth_provider::CanonStateSubscriptions;
+use reth_rpc::EthFilter;
+use reth_rpc_eth_types::EthApiError;
 use reth_rpc_eth_api::{
     EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
-use tokio::{
-    sync::broadcast::error::RecvError,
-    time,
-};
+use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
-use crate::{traits::{FlashblocksAPI, PendingBlocksAPI}, metrics::Metrics};
+use crate::metrics::Metrics;
+use crate::traits::{FlashblocksAPI, PendingBlocksAPI};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
@@ -291,7 +288,7 @@ where
                         "time out too long, timeout: {ms} ms, max: {MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS} ms"
                     ),
                     None::<()>,
-                ))
+                ));
             }
             Some(ms) => ms,
             _ => MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS,
@@ -476,6 +473,7 @@ where
 
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
 
+        let mut fetched_logs = HashSet::new();
         // Get historical logs if fromBlock is not pending
         if !matches!(from_block, Some(BlockNumberOrTag::Pending)) {
             // Create a filter for historical data (fromBlock to latest)
@@ -485,13 +483,23 @@ where
                 to_block: Some(BlockNumberOrTag::Latest),
             };
 
-            let historical_logs = self.eth_filter.logs(historical_filter).await?;
+            let historical_logs: Vec<Log> = self.eth_filter.logs(historical_filter).await?;
+            for log in &historical_logs {
+                fetched_logs.insert((log.block_number, log.log_index));
+            }
             all_logs.extend(historical_logs);
         }
 
         // Always get pending logs when toBlock is pending
         let pending_logs = pending_blocks.get_pending_logs(&filter);
-        all_logs.extend(pending_logs);
+
+        // Dedup any logs from the pending state that may already have been covered in the historical logs
+        let deduped_pending_logs: Vec<Log> = pending_logs
+            .iter()
+            .filter(|log| !fetched_logs.contains(&(log.block_number, log.log_index)))
+            .cloned()
+            .collect();
+        all_logs.extend(deduped_pending_logs);
 
         Ok(all_logs)
     }

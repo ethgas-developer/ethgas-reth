@@ -15,8 +15,7 @@ use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Header as RPCHeader, state::StateOverride};
 use arc_swap::Guard;
-use reth::revm::{context_interface::result::ExecutionResult, state::EvmState};
-use reth_revm::db::BundleState;
+use reth_revm::{db::BundleState, state::EvmState};
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 
@@ -58,9 +57,6 @@ pub struct PendingBlocksBuilder {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
-    transaction_results: HashMap<B256, ExecutionResult>,
-    execution_times: HashMap<B256, u128>,
-    state_root_times: HashMap<B256, u128>,
 
     bundle_state: BundleState,
 }
@@ -84,9 +80,6 @@ impl PendingBlocksBuilder {
             transactions_by_hash: HashMap::new(),
             transaction_state: HashMap::new(),
             transaction_senders: HashMap::new(),
-            transaction_results: HashMap::new(),
-            execution_times: HashMap::new(),
-            state_root_times: HashMap::new(),
             state_overrides: None,
             bundle_state: BundleState::default(),
         }
@@ -165,31 +158,6 @@ impl PendingBlocksBuilder {
         self
     }
 
-    /// Stores the execution result for a transaction.
-    #[inline]
-    pub fn with_transaction_result(
-        &mut self,
-        hash: B256,
-        result: ExecutionResult,
-    ) -> &Self {
-        self.transaction_results.insert(hash, result);
-        self
-    }
-
-    /// Stores per-transaction EVM execution time.
-    #[inline]
-    pub fn with_execution_time(&mut self, hash: B256, time_us: u128) -> &Self {
-        self.execution_times.insert(hash, time_us);
-        self
-    }
-
-    /// Stores per-transaction state root simulation time.
-    #[inline]
-    pub fn with_state_root_time(&mut self, hash: B256, time_us: u128) -> &Self {
-        self.state_root_times.insert(hash, time_us);
-        self
-    }
-
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
         let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
@@ -212,9 +180,6 @@ impl PendingBlocksBuilder {
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             bundle_state: self.bundle_state,
-            transaction_results: self.transaction_results,
-            execution_times: self.execution_times,
-            state_root_times: self.state_root_times,
         })
     }
 }
@@ -235,9 +200,6 @@ pub struct PendingBlocks {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
-    transaction_results: HashMap<B256, ExecutionResult>,
-    execution_times: HashMap<B256, u128>,
-    state_root_times: HashMap<B256, u128>,
 
     bundle_state: BundleState,
 }
@@ -350,21 +312,6 @@ impl PendingBlocks {
         self.transaction_receipts.get(&tx_hash)
     }
 
-    /// Returns the execution result for a transaction.
-    pub fn get_transaction_result(&self, tx_hash: &B256) -> Option<&ExecutionResult> {
-        self.transaction_results.get(tx_hash)
-    }
-
-    /// Returns the per-transaction EVM execution time in microseconds.
-    pub fn get_execution_time(&self, tx_hash: &B256) -> Option<u128> {
-        self.execution_times.get(tx_hash).copied()
-    }
-
-    /// Returns the per-transaction state root simulation time in microseconds.
-    pub fn get_state_root_time(&self, tx_hash: &B256) -> Option<u128> {
-        self.state_root_times.get(tx_hash).copied()
-    }
-
     /// Returns a transaction by its hash.
     pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<&Transaction> {
         self.transactions_by_hash.get(&tx_hash)
@@ -412,10 +359,17 @@ impl PendingBlocks {
         self.transactions.clone()
     }
 
-    /// Returns all pending transactions with their associated logs from flashblocks.
+    /// Returns transactions with their associated logs from only the latest flashblock (delta).
+    ///
+    /// Unlike `get_pending_transactions_with_logs`, this returns only transactions
+    /// that were added in the most recent flashblock, avoiding duplicates
+    /// when streaming via WebSocket subscriptions.
     pub fn get_pending_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
+        let prev_count = self.previous_flashblocks_tx_count();
+
         self.transactions
             .iter()
+            .skip(prev_count)
             .map(|tx| {
                 let tx_hash = tx.tx_hash();
                 let (logs, gas_used) = self
@@ -471,21 +425,22 @@ impl PendingBlocks {
     ///
     /// Unlike `get_pending_transactions_with_logs`, this returns only transactions
     /// that were added in the most recent flashblock, avoiding duplicates
-    /// when streaming via WebSocket subscriptions.
+    /// when streaming via WebSocket subscriptions. Transactions without a known receipt are
+    /// skipped (rather than emitted with empty logs / no gas) so every entry is complete —
+    /// matching `get_latest_flashblock_transactions_with_logs_filtered`.
     pub fn get_latest_flashblock_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
         let prev_count = self.previous_flashblocks_tx_count();
 
         self.transactions
             .iter()
             .skip(prev_count)
-            .map(|tx| {
-                let tx_hash = tx.tx_hash();
-                let (logs, gas_used) = self
-                    .transaction_receipts
-                    .get(&tx_hash)
-                    .map(|receipt| (receipt.inner.logs().to_vec(), Some(receipt.gas_used)))
-                    .unwrap_or_default();
-                TransactionWithLogs { transaction: tx.clone(), logs, gas_used }
+            .filter_map(|tx| {
+                let receipt = self.transaction_receipts.get(&tx.tx_hash())?;
+                Some(TransactionWithLogs {
+                    transaction: tx.clone(),
+                    logs: receipt.inner.logs().to_vec(),
+                    gas_used: Some(receipt.gas_used),
+                })
             })
             .collect()
     }
@@ -568,5 +523,307 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
 
     fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
         self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{
+        Eip658Value, Header, Receipt, ReceiptEnvelope, ReceiptWithBloom, Sealed, Signed, TxEnvelope,
+        TxLegacy, transaction::Recovered,
+    };
+    use alloy_network::TransactionResponse;
+    use alloy_primitives::{
+        Address, B256, Bloom, Bytes, Log as PrimitiveLog, LogData, Signature, TxKind, U256,
+    };
+    use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt};
+    use alloy_rpc_types_engine::PayloadId;
+
+    use super::{PendingBlocks, PendingBlocksBuilder};
+    use crate::payload::{ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata};
+
+    fn test_flashblock() -> FlashBlock {
+        FlashBlock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: None,
+            diff: ExecutionPayloadFlashblockDeltaV1::default(),
+            metadata: Metadata {
+                block_number: 1,
+                new_account_balances: Default::default(),
+                receipts: Default::default(),
+            },
+        }
+    }
+
+    fn test_transaction_with_hash(hash: B256) -> Transaction {
+        let legacy = TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 1_000_000_000,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        };
+        let envelope = TxEnvelope::Legacy(Signed::new_unchecked(
+            legacy,
+            Signature::test_signature(),
+            hash,
+        ));
+        Transaction {
+            inner: Recovered::new_unchecked(envelope, Address::ZERO),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            block_timestamp: None,
+            transaction_index: Some(0),
+            effective_gas_price: Some(1_000_000_000),
+        }
+    }
+
+    fn receipt_with_topics(
+        tx_hash: B256,
+        log_address: Address,
+        topics: Vec<B256>,
+    ) -> TransactionReceipt {
+        let log = Log {
+            inner: PrimitiveLog {
+                address: log_address,
+                data: LogData::new_unchecked(topics, Bytes::new()),
+            },
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            block_timestamp: None,
+            transaction_hash: Some(tx_hash),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        };
+        TransactionReceipt {
+            inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    status: Eip658Value::Eip658(true),
+                    cumulative_gas_used: 21_000,
+                    logs: vec![log],
+                },
+                logs_bloom: Bloom::default(),
+            }),
+            transaction_hash: tx_hash,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: None,
+            contract_address: None,
+        }
+    }
+
+    fn receipt_with_log(tx_hash: B256, log_address: Address) -> TransactionReceipt {
+        receipt_with_topics(tx_hash, log_address, vec![])
+    }
+
+    fn build_pending_blocks_with_logs(entries: &[(B256, Address)]) -> PendingBlocks {
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        for &(hash, addr) in entries {
+            builder.with_transaction(test_transaction_with_hash(hash));
+            builder.with_receipt(hash, receipt_with_log(hash, addr));
+        }
+        builder.build().expect("build should succeed")
+    }
+
+    fn build_pending_blocks_with_topics(entries: &[(B256, Address, B256)]) -> PendingBlocks {
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        for &(hash, addr, topic) in entries {
+            builder.with_transaction(test_transaction_with_hash(hash));
+            builder.with_receipt(hash, receipt_with_topics(hash, addr, vec![topic]));
+        }
+        builder.build().expect("build should succeed")
+    }
+
+    #[test]
+    fn filtered_transactions_returns_only_matching_by_address() {
+        let (ha, hb, hc) =
+            (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB), B256::with_last_byte(0xCC));
+        let (aa, ab, ac) = (
+            Address::with_last_byte(0x0A),
+            Address::with_last_byte(0x0B),
+            Address::with_last_byte(0x0C),
+        );
+        let pending = build_pending_blocks_with_logs(&[(ha, aa), (hb, ab), (hc, ac)]);
+
+        let filter = Filter::new().address(ab);
+        let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
+
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].transaction.tx_hash(), hb);
+        assert_eq!(txs[0].logs.len(), 1);
+        assert_eq!(txs[0].logs[0].address(), ab);
+    }
+
+    #[test]
+    fn filtered_transactions_returns_only_matching_by_topic0() {
+        let (ha, hb) = (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB));
+        let (aa, ab) = (Address::with_last_byte(0x0A), Address::with_last_byte(0x0B));
+        let (ta, tb) = (B256::with_last_byte(0x11), B256::with_last_byte(0x22));
+        let pending = build_pending_blocks_with_topics(&[(ha, aa, ta), (hb, ab, tb)]);
+
+        let filter = Filter::new().event_signature(tb);
+        let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
+
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].transaction.tx_hash(), hb);
+    }
+
+    #[test]
+    fn filtered_transactions_returns_none_when_no_match() {
+        let ha = B256::with_last_byte(0xAA);
+        let aa = Address::with_last_byte(0x0A);
+        let pending = build_pending_blocks_with_logs(&[(ha, aa)]);
+
+        let filter = Filter::new().address(Address::with_last_byte(0xFF));
+        let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
+
+        assert!(txs.is_empty());
+    }
+
+    #[test]
+    fn filtered_transactions_populates_gas_used() {
+        let ha = B256::with_last_byte(0xAA);
+        let aa = Address::with_last_byte(0x0A);
+        let pending = build_pending_blocks_with_logs(&[(ha, aa)]);
+
+        let filter = Filter::new().address(aa);
+        let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
+
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].gas_used, Some(21_000));
+    }
+
+    #[test]
+    fn unfiltered_transactions_populate_logs_and_gas_used() {
+        let (ha, hb) = (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB));
+        let (aa, ab) = (Address::with_last_byte(0x0A), Address::with_last_byte(0x0B));
+        let pending = build_pending_blocks_with_logs(&[(ha, aa), (hb, ab)]);
+
+        let txs = pending.get_pending_transactions_with_logs();
+
+        assert_eq!(txs.len(), 2);
+        assert_eq!(txs[0].gas_used, Some(21_000));
+        assert_eq!(txs[0].logs.len(), 1);
+        assert_eq!(txs[1].logs[0].address(), ab);
+    }
+
+    #[test]
+    fn get_pending_logs_returns_logs_in_transaction_order() {
+        let (ha, hb, hc) =
+            (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB), B256::with_last_byte(0xCC));
+        let (aa, ab, ac) = (
+            Address::with_last_byte(0x0A),
+            Address::with_last_byte(0x0B),
+            Address::with_last_byte(0x0C),
+        );
+        let pending = build_pending_blocks_with_logs(&[(ha, aa), (hb, ab), (hc, ac)]);
+
+        let logs = pending.get_pending_logs(&Filter::default());
+
+        assert_eq!(logs.len(), 3, "should return one log per transaction");
+        assert_eq!(logs[0].address(), aa);
+        assert_eq!(logs[1].address(), ab);
+        assert_eq!(logs[2].address(), ac);
+    }
+
+    /// A receipt carrying two logs (each with empty topics) at distinct addresses.
+    fn receipt_with_two_logs(
+        tx_hash: B256,
+        addr_a: Address,
+        addr_b: Address,
+    ) -> TransactionReceipt {
+        let log = |index: u64, address: Address| Log {
+            inner: PrimitiveLog {
+                address,
+                data: LogData::new_unchecked(vec![], Bytes::new()),
+            },
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            block_timestamp: None,
+            transaction_hash: Some(tx_hash),
+            transaction_index: Some(0),
+            log_index: Some(index),
+            removed: false,
+        };
+        TransactionReceipt {
+            inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    status: Eip658Value::Eip658(true),
+                    cumulative_gas_used: 42_000,
+                    logs: vec![log(0, addr_a), log(1, addr_b)],
+                },
+                logs_bloom: Bloom::default(),
+            }),
+            transaction_hash: tx_hash,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 42_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: None,
+            contract_address: None,
+        }
+    }
+
+    #[test]
+    fn filtered_transactions_returns_all_logs_when_any_matches() {
+        let hash_a = B256::with_last_byte(0xAA);
+        let addr_match = Address::with_last_byte(0x0A);
+        let addr_other = Address::with_last_byte(0x0B);
+
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(test_transaction_with_hash(hash_a));
+        builder.with_receipt(hash_a, receipt_with_two_logs(hash_a, addr_match, addr_other));
+        let pending = builder.build().expect("build should succeed");
+
+        let filter = Filter::new().address(addr_match);
+        let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
+
+        assert_eq!(txs.len(), 1);
+        // A matching tx returns ALL of its logs, not just the ones matching the filter.
+        assert_eq!(txs[0].logs.len(), 2, "should return all logs, not just matching");
+        assert_eq!(txs[0].logs[0].address(), addr_match);
+        assert_eq!(txs[0].logs[1].address(), addr_other);
+    }
+
+    #[test]
+    fn filtered_transactions_with_combined_address_and_topic() {
+        let (hash_a, hash_b, hash_c) =
+            (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB), B256::with_last_byte(0xCC));
+        let (addr_x, addr_y) = (Address::with_last_byte(0x0A), Address::with_last_byte(0x0B));
+        let (topic_transfer, topic_approval) =
+            (B256::with_last_byte(0x01), B256::with_last_byte(0x02));
+
+        // Only (hash_a, addr_x, topic_transfer) matches both the address and the topic.
+        let pending = build_pending_blocks_with_topics(&[
+            (hash_a, addr_x, topic_transfer),
+            (hash_b, addr_x, topic_approval),
+            (hash_c, addr_y, topic_transfer),
+        ]);
+
+        let filter = Filter::new().address(addr_x).event_signature(topic_transfer);
+        let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
+
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].transaction.tx_hash(), hash_a);
     }
 }

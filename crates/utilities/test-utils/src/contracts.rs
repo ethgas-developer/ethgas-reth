@@ -32,3 +32,12 @@ sol!(
         "/../../test_utils/contracts/out/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json"
     )
 );
+
+sol!(
+    #[sol(rpc)]
+    Minimal7702Account,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test_utils/contracts/out/Minimal7702Account.sol/Minimal7702Account.json"
+    )
+);

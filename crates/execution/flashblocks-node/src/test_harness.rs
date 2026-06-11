@@ -25,10 +25,9 @@ use ethgas_node_runner::{
     },
 };
 use eyre::Result;
-use reth::chainspec::{ChainSpec, EthChainSpec};
-use reth::providers::CanonStateSubscriptions;
-use reth_ethereum_primitives::{Block, Receipt};
-use reth_primitives::TransactionSigned;
+use reth_chainspec::{ChainSpec, EthChainSpec};
+use reth_ethereum_primitives::{Block, Receipt, TransactionSigned};
+use reth_provider::CanonStateSubscriptions;
 use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
 use reth_provider::{AccountReader, BlockNumReader, BlockReader, ChainSpecProvider};
 use reth_transaction_pool::test_utils::TransactionBuilder;
@@ -38,13 +37,10 @@ use tokio::{
 };
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
-use crate::{
-    FlashblocksState, FlashblocksReceiver, FlashblocksAPI,
-    payload::{
-        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
-    },
-    rpc::{EthApiExt, EthApiOverrideServer},
-    traits::PendingBlocksAPI,
+use ethgas_reth_flashblocks::{
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
+    FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
+    payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata},
 };
 
 // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
@@ -172,6 +168,16 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
                 Arc::clone(&fb),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+            // Register the flashblocks-aware eth_subscribe endpoint (mirrors the production
+            // `FlashblocksExtension`); otherwise reth's default eth_subscribe rejects the
+            // flashblocks subscription kinds.
+            let eth_pubsub = EthPubSub::new(
+                ctx.registry.eth_api().clone(),
+                ctx.node().task_executor.clone(),
+                Arc::clone(&fb),
+            );
+            ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
             let fb_for_task = fb;
             let mut receiver = receiver

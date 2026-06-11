@@ -1,9 +1,10 @@
 pub mod cli;
 
+use ethgas_flashblocks_node::FlashblocksExtension;
 use ethgas_node_runner::EthgasNodeRunner;
-use ethgas_reth_flashblocks::{FlashblocksConfig, FlashblocksExtension};
-use reth::chainspec::EthereumChainSpecParser;
-use reth::cli::Cli;
+use ethgas_reth_flashblocks::FlashblocksConfig;
+use reth_ethereum_cli::Cli;
+use reth_ethereum_cli::chainspec::EthereumChainSpecParser;
 
 type NodeCli = Cli<EthereumChainSpecParser, cli::Args>;
 

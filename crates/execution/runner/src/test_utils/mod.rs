@@ -10,7 +10,7 @@
 // Re-export from ethgas-test-utils
 pub use ethgas_test_utils::{
     Account, DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_test_genesis,
-    DoubleCounter, MockERC20, TransparentUpgradeableProxy,
+    DoubleCounter, Minimal7702Account, MockERC20, TransparentUpgradeableProxy,
 };
 
 mod constants;

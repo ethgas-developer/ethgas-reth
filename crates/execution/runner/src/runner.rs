@@ -2,8 +2,8 @@
 //! node.
 
 use eyre::Result;
-use reth::builder::{EngineNodeLauncher, Node, NodeHandle, NodeHandleFor, TreeConfig};
-use reth::providers::providers::BlockchainProvider;
+use reth_node_builder::{EngineNodeLauncher, Node, NodeHandle, NodeHandleFor, TreeConfig};
+use reth_provider::providers::BlockchainProvider;
 use reth_node_ethereum::EthereumNode;
 use tracing::info;
 

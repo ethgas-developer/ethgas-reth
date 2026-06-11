@@ -3,13 +3,12 @@
 
 use std::sync::Arc;
 
-use crate::{
-    FlashblocksConfig,
-    rpc::{EthApiExt, EthApiOverrideServer},
-    subscription::FlashblocksSubscriber,
-};
 use ethgas_node_runner::{EthgasNodeExtension, FromExtensionConfig, NodeHooks};
-use reth::providers::CanonStateSubscriptions;
+use ethgas_reth_flashblocks::{
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
+    FlashblocksSubscriber,
+};
+use reth_provider::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
 
@@ -73,6 +72,16 @@ impl EthgasNodeExtension for FlashblocksExtension {
                 Arc::clone(&state_for_rpc),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+            // Register the flashblocks-aware `eth_subscribe` endpoint. Uses `replace_configured`
+            // because `eth_subscribe` already exists from reth's standard module; standard
+            // subscription kinds are proxied to reth's `EthPubSub` via the passed `eth_api`.
+            let eth_pubsub = EthPubSub::new(
+                ctx.registry.eth_api().clone(),
+                ctx.node().task_executor.clone(),
+                state_for_rpc,
+            );
+            ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
             Ok(())
         })

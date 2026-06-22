@@ -1,6 +1,10 @@
 //! Flashblocks state processor.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_consensus::{
     Header, TxEnvelope, TxReceipt,
@@ -32,6 +36,7 @@ use crate::{
     block_assembler::BlockAssembler,
     cache::FlashblockCache,
     error::{ProviderError, StateProcessorError},
+    metrics::Metrics,
     payload::FlashBlock,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
     validation::{
@@ -133,7 +138,10 @@ where
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
                     );
+                    // Total arrival -> pending-state-published latency (gates RPC visibility).
+                    let processing_start = Instant::now();
                     self.apply_flashblock(prev_pending_blocks, flashblock).await;
+                    Metrics::default().block_processing_duration.record(processing_start.elapsed());
                 }
             }
         }
@@ -343,6 +351,9 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &Vec<FlashBlock>,
     ) -> crate::error::Result<Option<Arc<PendingBlocks>>> {
+        let metrics = Metrics::default();
+        let build_start = Instant::now();
+
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<FlashBlock>>::new();
         for flashblock in flashblocks {
             flashblocks_per_block
@@ -353,6 +364,10 @@ where
 
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
+
+        // Cold canonical reads (parent header + fresh state provider open) — the cost prewarming
+        // would attack.
+        let state_open_start = Instant::now();
         let mut last_block_header = self
             .client
             .header_by_number(canonical_block)
@@ -366,6 +381,7 @@ where
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
+        metrics.build_state_open_duration.record(state_open_start.elapsed());
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         // Track state changes across flashblocks, accumulating bundle state
@@ -383,6 +399,14 @@ where
             prev_pending_blocks.as_ref().map_or_else(StateOverride::default, |pending_blocks| {
                 pending_blocks.get_state_overrides().unwrap_or_default()
             });
+
+        // Per-component accumulators. `executed_txns` is the new delta, `total_txns` the whole
+        // block — their gap separates the steady-state path from the cold full-re-exec path.
+        let mut evm_setup_elapsed = Duration::ZERO;
+        let mut execution_elapsed = Duration::ZERO;
+        let mut receipt_elapsed = Duration::ZERO;
+        let mut executed_txns: u64 = 0;
+        let mut total_txns: u64 = 0;
 
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
@@ -415,6 +439,8 @@ where
             pending_blocks_builder.with_flashblocks(flashblocks.clone());
             pending_blocks_builder.with_header(header.clone());
 
+            let evm_setup_start = Instant::now();
+
             let block_env_attributes = NextBlockEnvAttributes {
                 timestamp: base.timestamp,
                 suggested_fee_recipient: base.fee_recipient,
@@ -442,10 +468,14 @@ where
                 .apply_beacon_root_contract_call(Some(base.parent_beacon_block_root), &mut evm)
                 .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
 
+            evm_setup_elapsed += evm_setup_start.elapsed();
+
             let mut gas_used = 0;
             let mut next_log_index = 0;
 
             for (idx, transaction) in block.body.transactions.iter().enumerate() {
+                total_txns += 1;
+                let receipt_start = Instant::now();
                 let sender = match prev_pending_blocks
                     .as_ref()
                     .and_then(|p| p.get_transaction_sender(transaction.tx_hash()))
@@ -533,6 +563,9 @@ where
                 gas_used = receipt.cumulative_gas_used();
                 next_log_index += receipt.logs().len();
 
+                // Sender recovery + rpc tx/receipt construction: runs for every tx, reused or not.
+                receipt_elapsed += receipt_start.elapsed();
+
                 let mut should_execute_transaction = false;
                 match &prev_pending_blocks {
                     Some(pending_blocks) => {
@@ -552,6 +585,11 @@ where
                 }
 
                 if should_execute_transaction {
+                    executed_txns += 1;
+                    // Mixes EVM compute with lazy cold reads (first touch hits the provider).
+                    // High time vs few `executed_txns` => cold reads (prewarmable); time tracking
+                    // `executed_txns` => compute (not prewarmable).
+                    let execution_start = Instant::now();
                     let ResultAndState { state, .. } = evm
                         .transact(recovered_transaction)
                         .map_err(|e| crate::error::ExecutionError::TransactionFailed {
@@ -577,6 +615,7 @@ where
                     pending_blocks_builder
                         .with_transaction_state(*transaction.tx_hash(), state.clone());
                     evm.db_mut().commit(state);
+                    execution_elapsed += execution_start.elapsed();
                 }
             }
 
@@ -589,9 +628,21 @@ where
         }
 
         // Extract the accumulated bundle state.
+        let finalize_start = Instant::now();
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);
-        Ok(Some(Arc::new(pending_blocks_builder.build()?)))
+        let result = Arc::new(pending_blocks_builder.build()?);
+        metrics.build_bundle_finalize_duration.record(finalize_start.elapsed());
+
+        // Record the per-component breakdown so the dominant cost is visible in Prometheus.
+        metrics.build_evm_setup_duration.record(evm_setup_elapsed);
+        metrics.build_execution_duration.record(execution_elapsed);
+        metrics.build_receipt_duration.record(receipt_elapsed);
+        metrics.build_executed_transactions.record(executed_txns as f64);
+        metrics.build_total_transactions.record(total_txns as f64);
+        metrics.build_total_duration.record(build_start.elapsed());
+
+        Ok(Some(result))
     }
 }

@@ -111,4 +111,39 @@ pub struct Metrics {
     /// Size of bundle state being cloned (number of accounts).
     #[metric(describe = "Size of bundle state being cloned (number of accounts)")]
     pub bundle_state_clone_size: Histogram,
+
+    // `build_pending_state` breakdown: splits per-flashblock latency into its components to
+    // show whether cold disk reads or compute/cloning dominates.
+    /// Total wall time of `build_pending_state`, end to end.
+    #[metric(describe = "Total wall time of build_pending_state")]
+    pub build_total_duration: Histogram,
+
+    /// Time to open the canonical `StateProvider` and read the parent header.
+    #[metric(describe = "Time to open the canonical state provider and parent header")]
+    pub build_state_open_duration: Histogram,
+
+    /// Time spent setting up the EVM env and applying pre-execution system calls (4788/2935).
+    #[metric(describe = "Time spent on EVM env setup and pre-execution system calls")]
+    pub build_evm_setup_duration: Histogram,
+
+    /// Time spent executing newly-seen transactions (the `evm.transact` + commit path).
+    #[metric(describe = "Time spent executing new transactions (evm.transact + commit)")]
+    pub build_execution_duration: Histogram,
+
+    /// Time building receipts and RPC tx objects for all txs (scales with the whole block,
+    /// reused or not — not just the new delta).
+    #[metric(describe = "Time spent building receipts and rpc tx objects for all txs")]
+    pub build_receipt_duration: Histogram,
+
+    /// Time spent merging transitions and taking the final bundle state.
+    #[metric(describe = "Time spent merging transitions and taking the final bundle state")]
+    pub build_bundle_finalize_duration: Histogram,
+
+    /// Number of transactions actually executed in a `build_pending_state` call (the new delta).
+    #[metric(describe = "Number of transactions executed in a build_pending_state call")]
+    pub build_executed_transactions: Histogram,
+
+    /// Total number of transactions iterated in a `build_pending_state` call (whole block).
+    #[metric(describe = "Total number of transactions iterated in a build_pending_state call")]
+    pub build_total_transactions: Histogram,
 }

@@ -1,0 +1,83 @@
+[package]
+name = "ethgas-reth-flashblocks"
+version.workspace = true
+edition.workspace = true
+
+[features]
+test-utils = [
+    "dep:reth-transaction-pool",
+]
+
+[dependencies]
+# reth
+reth-rpc.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc-eth-types.workspace = true
+reth-evm.workspace = true
+reth-rpc-convert.workspace = true
+reth-provider.workspace = true
+reth-chainspec.workspace = true
+reth-tracing.workspace = true
+reth-ethereum-primitives.workspace = true
+reth-node-ethereum.workspace = true
+reth-evm-ethereum.workspace = true
+reth-primitives-traits.workspace = true
+reth-exex.workspace = true
+reth-revm.workspace = true
+reth-tasks.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+alloy-hardforks.workspace = true
+alloy-eips.workspace = true
+alloy-rpc-types.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-consensus.workspace = true
+alloy-provider.workspace = true
+alloy-genesis.workspace = true
+alloy-rpc-client.workspace = true
+alloy-serde.workspace = true
+alloy-network.workspace = true
+
+# tokio
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-tungstenite.workspace = true
+
+# async
+futures.workspace = true
+futures-util.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+jsonrpsee-types.workspace = true
+
+# misc
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+metrics.workspace = true
+metrics-derive.workspace = true
+eyre.workspace = true
+brotli.workspace = true
+arc-swap.workspace = true
+thiserror.workspace = true
+
+# test-utils (optional)
+reth-transaction-pool = { workspace = true, optional = true, features = ["test-utils"] }
+
+[dev-dependencies]
+ethgas-reth-flashblocks = { path = ".", features = ["test-utils"] }
+rand.workspace = true
+rstest.workspace = true
+reth-db.workspace = true
+reth-testing-utils.workspace = true
+reth-db-common.workspace = true
+reth-e2e-test-utils.workspace = true
+reth-node-builder.workspace = true
+reth-node-api.workspace = true
+reth-node-core.workspace = true
+reth-tasks.workspace = true
+alloy-sol-types = { workspace = true, features = ["std"] }

@@ -6,61 +6,17 @@ edition.workspace = true
 [dependencies]
 # internal
 ethgas-reth-flashblocks.workspace = true
-ethgas-reth-rpc.workspace = true
+ethgas-flashblocks-node.workspace = true
+ethgas-node-runner.workspace = true
+ethgas-cli-utils.workspace = true
 
 # reth
-reth.workspace = true
-reth-primitives.workspace = true
-reth-rpc-eth-api.workspace = true
-reth-rpc-convert.workspace = true
+reth-ethereum-cli.workspace = true
 reth-cli-util.workspace = true
-reth-node-ethereum.workspace = true
-
-# revm
-revm.workspace = true
-revm-bytecode.workspace = true
-
-# alloy
-alloy-primitives.workspace = true
-alloy-eips.workspace = true
-alloy-rpc-types.workspace = true
-alloy-rpc-types-engine.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-consensus.workspace = true
-alloy-trie.workspace = true
-alloy-provider.workspace = true
-alloy-hardforks.workspace = true
-
-# tokio
-tokio.workspace = true
-tokio-stream.workspace = true
-tokio-tungstenite.workspace = true
-
-# async
-futures.workspace = true
-futures-util.workspace = true
-reqwest.workspace = true
-
-# reth-exex
-reth-exex.workspace = true
-
-# rpc
-jsonrpsee.workspace = true
 
 # misc
 clap.workspace = true
-tracing.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 url.workspace = true
-metrics.workspace = true
-metrics-derive.workspace = true
-itertools.workspace = true
-eyre.workspace = true
-uuid.workspace = true
-time.workspace = true
-chrono.workspace = true
-once_cell.workspace = true
 
 [features]
 default = []

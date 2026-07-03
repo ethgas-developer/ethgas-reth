@@ -1,0 +1,27 @@
+[package]
+name = "ethgas-cli-utils"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# reth
+reth-node-core.workspace = true
+
+# cli
+clap = { workspace = true, features = ["derive"] }
+
+# tracing
+tracing.workspace = true
+
+# metrics
+metrics.workspace = true
+
+# misc
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+rstest = "0.26.1"
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

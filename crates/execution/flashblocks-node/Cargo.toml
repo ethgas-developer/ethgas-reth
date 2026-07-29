@@ -67,6 +67,7 @@ reth-e2e-test-utils.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-provider.workspace = true
 reth-chain-state.workspace = true
+reth-trie-common.workspace = true
 reth-chainspec.workspace = true
 reth-node-api.workspace = true
 reth-node-ethereum.workspace = true

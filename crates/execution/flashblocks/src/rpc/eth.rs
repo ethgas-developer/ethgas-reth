@@ -97,6 +97,7 @@ pub trait EthApiOverride {
         transaction: TransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256>;
 
     /// Simulates transactions with flashblock state support.
@@ -378,12 +379,14 @@ where
         transaction: TransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
         debug!(
             message = "rpc::estimate_gas",
             transaction = ?transaction,
             block_number = ?block_number,
             overrides = ?overrides,
+            block_overrides = ?block_overrides,
         );
 
         let mut block_id = block_number.unwrap_or_default();
@@ -401,9 +404,14 @@ where
         state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
 
-        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
-            .await
-            .map_err(Into::into)
+        EthCall::estimate_gas_at(
+            &self.eth_api,
+            transaction,
+            block_id,
+            EvmOverrides::new(Some(final_overrides), block_overrides),
+        )
+        .await
+        .map_err(Into::into)
     }
 
     async fn simulate_v1(

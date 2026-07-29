@@ -150,7 +150,7 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
                     while let Some(Ok(notification)) = canonical_stream.next().await {
                         let committed = notification.committed();
                         for block in committed.blocks_iter() {
-                            state_for_canonical.on_canonical_block_received(&block);
+                            state_for_canonical.on_canonical_block_received(block);
                         }
                     }
                 });

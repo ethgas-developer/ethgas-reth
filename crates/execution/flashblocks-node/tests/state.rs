@@ -16,7 +16,8 @@ mod tests {
     use reth_chainspec::{ChainSpec, EthChainSpec};
     use reth_node_api::NodeTypesWithDBAdapter;
     use reth_provider::{AccountReader, BlockNumReader, BlockReader};
-    use reth_chain_state::{ComputedTrieData, ExecutedBlock, NewCanonicalChain};
+    use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
+    use reth_trie_common::ComputedTrieData;
     use reth_revm::database::StateProviderDatabase;
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use reth_db::{DatabaseEnv, test_utils::TempDatabase};

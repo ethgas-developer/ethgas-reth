@@ -167,7 +167,6 @@ where
                         );
 
                         backoff = Self::sleep(&metrics, backoff).await;
-                        continue;
                     }
                 }
             }
@@ -228,10 +227,10 @@ fn parse_flashblock_json(text: &str) -> eyre::Result<FlashBlock> {
 }
 
 fn try_parse_message(bytes: &[u8]) -> eyre::Result<String> {
-    if let Ok(text) = String::from_utf8(bytes.to_vec()) {
-        if text.trim_start().starts_with("{") {
-            return Ok(text);
-        }
+    if let Ok(text) = String::from_utf8(bytes.to_vec()) &&
+        text.trim_start().starts_with('{')
+    {
+        return Ok(text);
     }
 
     let mut decompressor = brotli::Decompressor::new(bytes, 4096);

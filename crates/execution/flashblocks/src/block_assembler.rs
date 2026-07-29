@@ -61,10 +61,8 @@ impl BlockAssembler {
             .flat_map(|flashblock| flashblock.diff.transactions.clone())
             .collect();
 
-        let withdrawals: Vec<Withdrawal> = flashblocks
-            .iter()
-            .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
-            .collect();
+        let withdrawals: Vec<Withdrawal> =
+            flashblocks.iter().flat_map(|flashblock| flashblock.diff.withdrawals.clone()).collect();
 
         let execution_payload = ExecutionPayloadV3 {
             blob_gas_used: latest_flashblock.diff.blob_gas_used,
@@ -94,7 +92,8 @@ impl BlockAssembler {
             .try_into_block()
             .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
 
-        // TODO: ExecutionPayloadV3 carries neither the parent beacon block root nor the requests hash
+        // TODO: ExecutionPayloadV3 carries neither the parent beacon block root nor the requests
+        // hash
         block.header.parent_beacon_block_root = Some(base.parent_beacon_block_root);
         block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
 
@@ -111,31 +110,27 @@ mod tests {
 
     use super::*;
     use crate::{
+        ProtocolError,
         payload::{
             ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
         },
-        ProtocolError,
     };
 
     fn create_test_flashblock(index: u64, with_base: bool) -> FlashBlock {
         FlashBlock {
             payload_id: PayloadId::default(),
             index,
-            base: if with_base {
-                Some(ExecutionPayloadBaseV1 {
-                    parent_beacon_block_root: B256::ZERO,
-                    parent_hash: B256::ZERO,
-                    fee_recipient: Address::ZERO,
-                    prev_randao: B256::ZERO,
-                    block_number: 100,
-                    gas_limit: 30_000_000,
-                    timestamp: 1700000000,
-                    extra_data: Bytes::default(),
-                    base_fee_per_gas: U256::from(1000000000u64),
-                })
-            } else {
-                None
-            },
+            base: with_base.then(|| ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                block_number: 100,
+                gas_limit: 30_000_000,
+                timestamp: 1700000000,
+                extra_data: Bytes::default(),
+                base_fee_per_gas: U256::from(1000000000u64),
+            }),
             diff: ExecutionPayloadFlashblockDeltaV1 {
                 state_root: B256::ZERO,
                 receipts_root: B256::ZERO,

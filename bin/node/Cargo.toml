@@ -21,3 +21,6 @@ url.workspace = true
 [features]
 default = []
 jemalloc = ["reth-cli-util/jemalloc"]
+
+[lints]
+workspace = true

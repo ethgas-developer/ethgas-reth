@@ -30,9 +30,7 @@ pub trait EngineProtocol: Send + Sync {
     fn client(
         jwt: JwtSecret,
         address: EngineAddress,
-    ) -> impl std::future::Future<
-        Output = impl SubscriptionClientT + Send + Sync + Unpin + 'static,
-    > + Send;
+    ) -> impl std::future::Future<Output = impl SubscriptionClientT + Send + Sync + Unpin + 'static> + Send;
 }
 
 /// Implementation of [`EngineProtocol`] that talks to the Engine API over IPC.
@@ -79,10 +77,7 @@ impl<P: EngineProtocol> EngineApi<P> {
     }
 
     /// Get a payload by ID.
-    pub async fn get_payload(
-        &self,
-        payload_id: PayloadId,
-    ) -> Result<ExecutionPayloadEnvelopeV4> {
+    pub async fn get_payload(&self, payload_id: PayloadId) -> Result<ExecutionPayloadEnvelopeV4> {
         debug!(payload_id = %payload_id, "Fetching payload");
         Ok(EngineApiClient::<EthEngineTypes>::get_payload_v4(&self.client().await, payload_id)
             .await?)

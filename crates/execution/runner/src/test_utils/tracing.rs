@@ -1,3 +1,5 @@
+//! Tracing setup for tests.
+
 use std::sync::Once;
 
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};

@@ -1,30 +1,28 @@
 //! Integration tests covering the Flashblocks RPC surface area.
 //!
 //! These tests exercise the flashblocks-extended RPC endpoints (pending block,
-//! pending balance, pending transaction receipt, eth_call with flashblock state, etc.)
+//! pending balance, pending transaction receipt, `eth_call` with flashblock state, etc.)
 //! by launching a full local Ethereum node with the flashblocks test extension.
 
 use std::str::FromStr;
 
 use DoubleCounter::DoubleCounterInstance;
-use alloy_eips::BlockNumberOrTag;
-use alloy_provider::network::TransactionResponse;
+use alloy_consensus::constants::EMPTY_WITHDRAWALS;
+use alloy_eips::{BlockNumberOrTag, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{
     Address, B256, Bytes, Log as PrimitiveLog, LogData, TxHash, U256, address, b256, bytes,
+    map::foldhash::HashMap,
 };
-use alloy_provider::Provider;
-use alloy_consensus::constants::EMPTY_WITHDRAWALS;
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_provider::{Provider, network::TransactionResponse};
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, TransactionInput, TransactionRequest, error::EthRpcErrorCode};
-use ethgas_node_runner::test_utils::{Account, DoubleCounter};
 use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
+use ethgas_node_runner::test_utils::{Account, DoubleCounter};
 use ethgas_reth_flashblocks::payload::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
 };
 use eyre::Result;
-use alloy_primitives::map::foldhash::HashMap;
 use futures_util::{SinkExt, StreamExt};
 use reth_ethereum_primitives::Receipt;
 use serde_json::json;
@@ -88,8 +86,8 @@ impl TestSetup {
             .expect("should be able to sign increment2() txn");
 
         // Alice's ETH transfer at nonce 1 (TRANSFER_ETH_TX in the first flashblock already consumed
-        // Alice's nonce 0; block 2 stacks on block 1's pending state). The value is not asserted, so
-        // it is kept comfortably below Alice's remaining balance.
+        // Alice's nonce 0; block 2 stacks on block 1's pending state). The value is not asserted,
+        // so it is kept comfortably below Alice's remaining balance.
         let (eth_transfer_tx, eth_transfer_hash) = alice
             .sign_txn_request(
                 TransactionRequest::default()
@@ -365,9 +363,8 @@ async fn test_get_transaction_receipt_pending() -> Result<()> {
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
-    let receipt = provider
-        .get_transaction_receipt(setup.txn_details.alice_eth_transfer_hash)
-        .await?;
+    let receipt =
+        provider.get_transaction_receipt(setup.txn_details.alice_eth_transfer_hash).await?;
     assert!(receipt.is_none());
 
     setup.send_test_payloads().await?;
@@ -407,19 +404,13 @@ async fn test_eth_call() -> Result<()> {
 
     // DoubleCounter initializes count1/count2 to 1; increment()/increment2() each add 1, so after
     // one call each both read back as 2.
-    let count1_result: Bytes = setup
-        .harness
-        .rpc_client()?
-        .request("eth_call", (setup.count1(), "pending"))
-        .await?;
+    let count1_result: Bytes =
+        setup.harness.rpc_client()?.request("eth_call", (setup.count1(), "pending")).await?;
     let count1 = U256::from_be_slice(&count1_result);
     assert_eq!(count1, U256::from(2));
 
-    let count2_result: Bytes = setup
-        .harness
-        .rpc_client()?
-        .request("eth_call", (setup.count2(), "pending"))
-        .await?;
+    let count2_result: Bytes =
+        setup.harness.rpc_client()?.request("eth_call", (setup.count2(), "pending")).await?;
     let count2 = U256::from_be_slice(&count2_result);
     assert_eq!(count2, U256::from(2));
 
@@ -433,11 +424,8 @@ async fn test_eth_estimate_gas() -> Result<()> {
     setup.send_test_payloads().await?;
 
     // estimate_gas for a simple call to the deployed counter
-    let gas: U256 = setup
-        .harness
-        .rpc_client()?
-        .request("eth_estimateGas", (setup.count1(), "pending"))
-        .await?;
+    let gas: U256 =
+        setup.harness.rpc_client()?.request("eth_estimateGas", (setup.count1(), "pending")).await?;
     assert!(gas > U256::ZERO, "estimated gas should be > 0");
 
     Ok(())
@@ -682,7 +670,7 @@ const TEST_LOG_TOPIC_0: B256 =
 const TEST_LOG_TOPIC_1: B256 =
     b256!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 
-fn make_log(address: Address, topics: Vec<B256>) -> PrimitiveLog {
+const fn make_log(address: Address, topics: Vec<B256>) -> PrimitiveLog {
     PrimitiveLog { address, data: LogData::new_unchecked(topics, Bytes::new()) }
 }
 
@@ -727,8 +715,7 @@ async fn test_get_logs_pending() -> Result<()> {
     let provider = harness.provider();
 
     // No pending flashblock yet -> no pending logs.
-    let logs =
-        provider.get_logs(&Filter::default().select(BlockNumberOrTag::Pending)).await?;
+    let logs = provider.get_logs(&Filter::default().select(BlockNumberOrTag::Pending)).await?;
     assert_eq!(logs.len(), 0);
 
     harness
@@ -841,10 +828,8 @@ async fn test_eth_simulate_v1() -> Result<()> {
         return_full_transactions: true,
     };
 
-    let block = provider
-        .simulate(&simulate_call)
-        .block_id(BlockNumberOrTag::Pending.into())
-        .await?;
+    let block =
+        provider.simulate(&simulate_call).block_id(BlockNumberOrTag::Pending.into()).await?;
     assert_eq!(block.len(), 1);
     assert_eq!(block[0].calls.len(), 3);
     // count1 == 2 before the simulated increment, == 3 after.
@@ -913,10 +898,7 @@ async fn test_pending_block_header_fields() -> Result<()> {
 
     // withdrawals should be an empty array, not null.
     assert_eq!(pending_block.withdrawals, Some(vec![].into()));
-    assert_eq!(
-        pending_block.header.parent_beacon_block_root,
-        Some(TEST_PARENT_BEACON_BLOCK_ROOT)
-    );
+    assert_eq!(pending_block.header.parent_beacon_block_root, Some(TEST_PARENT_BEACON_BLOCK_ROOT));
     assert_eq!(pending_block.header.withdrawals_root, Some(EMPTY_WITHDRAWALS));
     assert_eq!(pending_block.header.requests_hash, Some(EMPTY_REQUESTS_HASH));
 

@@ -7,12 +7,12 @@ use std::fmt;
 
 use eyre::Result;
 use futures::future::BoxFuture;
+use reth_exex::ExExContext;
 use reth_node_builder::{
     NodeAdapter, NodeBuilderWithComponents, NodeComponentsBuilder, WithLaunchContext,
     node::FullNode,
     rpc::{RethRpcAddOns, RpcContext},
 };
-use reth_exex::ExExContext;
 
 use crate::types::{EthAddOns, EthComponents, EthNodeTypes};
 
@@ -62,11 +62,7 @@ pub struct NodeHooks {
 impl NodeHooks {
     /// Create a new, empty `NodeHooks`.
     pub fn new() -> Self {
-        Self {
-            rpc_hooks: Vec::new(),
-            node_started_hooks: Vec::new(),
-            exex_hooks: Vec::new(),
-        }
+        Self { rpc_hooks: Vec::new(), node_started_hooks: Vec::new(), exex_hooks: Vec::new() }
     }
 
     /// Applies all accumulated hooks to the given configured builder.
@@ -78,7 +74,8 @@ impl NodeHooks {
 
         // Install ExEx hooks
         for (id, factory) in exex_hooks {
-            builder = builder.install_exex(id, move |ctx: ExExContext<EthNodeAdapter>| factory(ctx));
+            builder =
+                builder.install_exex(id, move |ctx: ExExContext<EthNodeAdapter>| factory(ctx));
         }
 
         // Install RPC hooks

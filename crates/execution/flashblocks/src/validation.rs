@@ -49,8 +49,8 @@ impl FlashblockSequenceValidator {
         incoming_index: u64,
     ) -> SequenceValidationResult {
         // Next flashblock within the current block
-        if incoming_block_number == latest_block_number
-            && incoming_index == latest_flashblock_index + 1
+        if incoming_block_number == latest_block_number &&
+            incoming_index == latest_flashblock_index + 1
         {
             SequenceValidationResult::NextInSequence
         // First flashblock of the next block
@@ -115,13 +115,13 @@ impl ReorgDetector {
         tracked_tx_hashes: &[B256],
         canonical_tx_hashes: &[B256],
     ) -> ReorgDetectionResult {
-        if tracked_tx_hashes != canonical_tx_hashes {
+        if tracked_tx_hashes == canonical_tx_hashes {
+            ReorgDetectionResult::NoReorg
+        } else {
             ReorgDetectionResult::ReorgDetected {
                 tracked_count: tracked_tx_hashes.len(),
                 canonical_count: canonical_tx_hashes.len(),
             }
-        } else {
-            ReorgDetectionResult::NoReorg
         }
     }
 }

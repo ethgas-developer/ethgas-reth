@@ -7,24 +7,24 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::BlockNumberOrTag;
+use alloy_hardforks::EthereumHardforks;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{B256, BlockNumber, map::foldhash::HashMap};
 use alloy_rpc_types::{TransactionTrait, state::StateOverride};
 use alloy_rpc_types_eth::Log;
 use arc_swap::ArcSwapOption;
-use alloy_hardforks::EthereumHardforks;
 use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
 use reth_ethereum_primitives::Block;
 use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes, block::SystemCaller};
 use reth_evm_ethereum::EthEvmConfig;
+use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use reth_revm::{
     DatabaseCommit, State, context::result::ResultAndState, database::StateProviderDatabase,
+    db::states::bundle_state::BundleRetention,
 };
-use reth_rpc_eth_types::receipt::build_receipt;
-use reth_primitives_traits::RecoveredBlock;
-use reth_revm::db::states::bundle_state::BundleRetention;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
+use reth_rpc_eth_types::receipt::build_receipt;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 use tracing::{debug, error, warn};
 
@@ -152,6 +152,10 @@ where
                 self.pending_blocks.swap(new_pending_blocks);
             }
             Err(e) => {
+                // `collapsible_match` wants the `if` folded into a match guard, but the guard
+                // would move `flashblock` into `cache.insert(..)` while the
+                // `MissingFirstFlashblock` arm below still needs it — that does not compile.
+                #[allow(clippy::collapsible_match)]
                 match e {
                     StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
                         ..
@@ -163,12 +167,12 @@ where
                     }
                     StateProcessorError::MissingFirstFlashblock => {
                         let mut cache = self.cache.lock().await;
-                        if flashblock.index > 0
-                            && cache.has_flashblock(
+                        if flashblock.index > 0 &&
+                            cache.has_flashblock(
                                 flashblock.metadata.block_number,
                                 flashblock.index - 1,
-                            )
-                            && cache.insert(flashblock)
+                            ) &&
+                            cache.insert(flashblock)
                         {
                             return;
                         }
@@ -238,7 +242,8 @@ where
                     block_txn_hashes = ?block_txn_hashes,
                 );
 
-                // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
+                // If there is a reorg, we re-process all future flashblocks without reusing the
+                // existing pending state
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
                 self.build_pending_state(None, &flashblocks)
             }
@@ -262,7 +267,8 @@ where
                     canonical_txns_for_block = ?block_txn_hashes.len(),
                 );
                 // If no reorg, we can continue building on top of the existing pending state
-                // NOTE: We do not retain specific flashblocks here to avoid losing track of our "earliest" pending block number
+                // NOTE: We do not retain specific flashblocks here to avoid losing track of our
+                // "earliest" pending block number
                 self.build_pending_state(prev_pending_blocks, &flashblocks)
             }
             ReconciliationStrategy::NoPendingState => {
@@ -297,8 +303,8 @@ where
         );
 
         match validation_result {
-            SequenceValidationResult::NextInSequence
-            | SequenceValidationResult::FirstOfNextBlock => {
+            SequenceValidationResult::NextInSequence |
+            SequenceValidationResult::FirstOfNextBlock => {
                 // We have received the next flashblock for the current block
                 // or the first flashblock for the next block
                 let mut flashblocks = pending_blocks.get_flashblocks();
@@ -456,13 +462,14 @@ where
                 pending_blocks_builder.increment_nonce(sender);
                 pending_blocks_builder.with_transaction_sender(*transaction.tx_hash(), sender);
 
-                let receipt = receipt_by_hash.get(&transaction.tx_hash().clone()).cloned().ok_or(
-                    crate::error::ExecutionError::TransactionFailed {
-                        tx_hash: *transaction.tx_hash(),
-                        sender,
-                        reason: "missing receipt".to_string(),
-                    },
-                )?;
+                let receipt =
+                    receipt_by_hash.get(transaction.tx_hash()).cloned().ok_or_else(|| {
+                        crate::error::ExecutionError::TransactionFailed {
+                            tx_hash: *transaction.tx_hash(),
+                            sender,
+                            reason: "missing receipt".to_string(),
+                        }
+                    })?;
 
                 let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
                 let envelope = recovered_transaction.clone().convert::<TxEnvelope>();
@@ -470,8 +477,8 @@ where
                 let effective_gas_price = block
                     .base_fee_per_gas
                     .map(|base_fee| {
-                        transaction.effective_tip_per_gas(base_fee).unwrap_or_default()
-                            + base_fee as u128
+                        transaction.effective_tip_per_gas(base_fee).unwrap_or_default() +
+                            base_fee as u128
                     })
                     .unwrap_or_else(|| transaction.max_fee_per_gas());
 

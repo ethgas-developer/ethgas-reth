@@ -13,4 +13,3 @@ pub const BLOCK_BUILD_DELAY_MS: u64 = 100;
 
 /// All-zeros secret for local testing only.
 pub const DEFAULT_JWT_SECRET: B256 = B256::ZERO;
-

@@ -17,11 +17,11 @@ use jsonrpsee::{
     server::SubscriptionMessage,
 };
 use reth_rpc::eth::EthPubSub as RethEthPubSub;
-use reth_tasks::Runtime;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
     pubsub::EthPubSubApiServer as RethEthPubSubApiServer,
 };
+use reth_tasks::Runtime;
 use serde::Serialize;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
@@ -77,16 +77,11 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         subscription_task_spawner: Runtime,
         flashblocks_state: Arc<FB>,
     ) -> Self {
-        Self {
-            inner: RethEthPubSub::new(eth_api, subscription_task_spawner),
-            flashblocks_state,
-        }
+        Self { inner: RethEthPubSub::new(eth_api, subscription_task_spawner), flashblocks_state }
     }
 
     /// Returns a stream that yields all new flashblocks as RPC blocks
-    fn new_flashblocks_stream(
-        flashblocks_state: Arc<FB>,
-    ) -> impl Stream<Item = RpcBlock<Ethereum>>
+    fn new_flashblocks_stream(flashblocks_state: Arc<FB>) -> impl Stream<Item = RpcBlock<Ethereum>>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
@@ -110,10 +105,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
     ///
     /// Each matching log is emitted as a separate stream item (one log per WebSocket message).
     /// Only logs from the most recent flashblock are emitted to avoid duplicates.
-    fn pending_logs_stream(
-        flashblocks_state: Arc<FB>,
-        filter: Filter,
-    ) -> impl Stream<Item = Log>
+    fn pending_logs_stream(flashblocks_state: Arc<FB>, filter: Filter) -> impl Stream<Item = Log>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
@@ -283,8 +275,7 @@ where
                     _ => Filter::default(),
                 };
 
-                let stream =
-                    Self::pending_logs_stream(Arc::clone(&self.flashblocks_state), filter);
+                let stream = Self::pending_logs_stream(Arc::clone(&self.flashblocks_state), filter);
 
                 tokio::spawn(async move {
                     pipe_from_stream(sink, stream).await;

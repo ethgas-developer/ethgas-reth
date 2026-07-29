@@ -20,3 +20,6 @@ alloy-rpc-types-eth.workspace = true
 
 # misc
 eyre.workspace = true
+
+[lints]
+workspace = true

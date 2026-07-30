@@ -3,8 +3,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::Header;
-use alloy_eips::BlockNumberOrTag;
-use alloy_eips::eip4895::Withdrawal;
+use alloy_eips::{BlockNumberOrTag, eip4895::Withdrawal};
 use alloy_network::Ethereum;
 use alloy_primitives::{
     Address, B256, BlockNumber, Sealed, TxHash, U256,
@@ -529,8 +528,8 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{
-        Eip658Value, Header, Receipt, ReceiptEnvelope, ReceiptWithBloom, Sealed, Signed, TxEnvelope,
-        TxLegacy, transaction::Recovered,
+        Eip658Value, Header, Receipt, ReceiptEnvelope, ReceiptWithBloom, Sealed, Signed,
+        TxEnvelope, TxLegacy, transaction::Recovered,
     };
     use alloy_network::TransactionResponse;
     use alloy_primitives::{
@@ -566,11 +565,8 @@ mod tests {
             value: U256::ZERO,
             input: Bytes::new(),
         };
-        let envelope = TxEnvelope::Legacy(Signed::new_unchecked(
-            legacy,
-            Signature::test_signature(),
-            hash,
-        ));
+        let envelope =
+            TxEnvelope::Legacy(Signed::new_unchecked(legacy, Signature::test_signature(), hash));
         Transaction {
             inner: Recovered::new_unchecked(envelope, Address::ZERO),
             block_hash: Some(B256::ZERO),
@@ -747,10 +743,7 @@ mod tests {
         addr_b: Address,
     ) -> TransactionReceipt {
         let log = |index: u64, address: Address| Log {
-            inner: PrimitiveLog {
-                address,
-                data: LogData::new_unchecked(vec![], Bytes::new()),
-            },
+            inner: PrimitiveLog { address, data: LogData::new_unchecked(vec![], Bytes::new()) },
             block_hash: Some(B256::ZERO),
             block_number: Some(1),
             block_timestamp: None,

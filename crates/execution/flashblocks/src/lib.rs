@@ -1,3 +1,9 @@
+//! Flashblocks support for the Ethgas node.
+//!
+//! Consumes flashblocks from the ethgas-builder over a WebSocket, replays them into a
+//! pending state on top of the canonical tip, and serves that state through an
+//! `eth_` RPC and pub-sub surface that overrides reth's own.
+
 pub mod config;
 pub use config::FlashblocksConfig;
 
@@ -5,7 +11,9 @@ pub mod state;
 pub use state::FlashblocksState;
 
 pub mod error;
-pub use error::{BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError};
+pub use error::{
+    BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError,
+};
 
 pub mod metrics;
 pub use metrics::Metrics;
@@ -37,6 +45,6 @@ pub use validation::{
 
 pub mod rpc;
 pub use rpc::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
-    ExtendedSubscriptionKind, FlashblocksSubscriptionKind,
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, ExtendedSubscriptionKind,
+    FlashblocksSubscriptionKind,
 };

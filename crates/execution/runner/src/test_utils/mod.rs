@@ -9,14 +9,13 @@
 
 // Re-export from ethgas-test-utils
 pub use ethgas_test_utils::{
-    Account, DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_test_genesis,
-    DoubleCounter, Minimal7702Account, MockERC20, TransparentUpgradeableProxy,
+    Account, DEVNET_CHAIN_ID, DoubleCounter, GENESIS_GAS_LIMIT, Minimal7702Account, MockERC20,
+    TransparentUpgradeableProxy, build_test_genesis,
 };
 
 mod constants;
 pub use constants::{
-    BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, DEFAULT_JWT_SECRET,
-    GAS_LIMIT, NODE_STARTUP_DELAY_MS,
+    BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, DEFAULT_JWT_SECRET, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
 };
 
 mod engine;

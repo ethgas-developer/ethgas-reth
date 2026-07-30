@@ -1,0 +1,2 @@
+allow-dbg-in-tests = true
+too-large-for-stack = 128

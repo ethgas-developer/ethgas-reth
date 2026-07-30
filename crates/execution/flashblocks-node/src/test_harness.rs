@@ -14,7 +14,9 @@ use std::{
 
 use alloy_consensus::Transaction;
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
-use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::foldhash::HashMap};
+use alloy_primitives::{
+    Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::foldhash::HashMap,
+};
 use alloy_rpc_types_engine::PayloadId;
 use derive_more::Deref;
 use ethgas_node_runner::{
@@ -27,9 +29,10 @@ use ethgas_node_runner::{
 use eyre::Result;
 use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_ethereum_primitives::{Block, Receipt, TransactionSigned};
-use reth_provider::CanonStateSubscriptions;
 use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
-use reth_provider::{AccountReader, BlockNumReader, BlockReader, ChainSpecProvider};
+use reth_provider::{
+    AccountReader, BlockNumReader, BlockReader, CanonStateSubscriptions, ChainSpecProvider,
+};
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -139,7 +142,7 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
             let provider = ctx.provider().clone();
 
             // Start the state processor with the provider
-            state_for_start.start(provider.clone());
+            state_for_start.start(provider);
 
             // If process_canonical is enabled, spawn a task to process canonical blocks
             if process_canonical {
@@ -150,7 +153,7 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
                     while let Some(Ok(notification)) = canonical_stream.next().await {
                         let committed = notification.committed();
                         for block in committed.blocks_iter() {
-                            state_for_canonical.on_canonical_block_received(&block);
+                            state_for_canonical.on_canonical_block_received(block);
                         }
                     }
                 });
@@ -487,21 +490,17 @@ impl<'a> FlashblockBuilder<'a> {
         let canonical_block_num =
             self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
 
-        let base = if self.index == 0 {
-            Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: current_block.hash(),
-                parent_hash: current_block.hash(),
-                fee_recipient: Address::random(),
-                prev_randao: B256::random(),
-                block_number: canonical_block_num,
-                gas_limit: current_block.gas_limit,
-                timestamp: current_block.timestamp + 2,
-                extra_data: Bytes::new(),
-                base_fee_per_gas: U256::from(100),
-            })
-        } else {
-            None
-        };
+        let base = (self.index == 0).then(|| ExecutionPayloadBaseV1 {
+            parent_beacon_block_root: current_block.hash(),
+            parent_hash: current_block.hash(),
+            fee_recipient: Address::random(),
+            prev_randao: B256::random(),
+            block_number: canonical_block_num,
+            gas_limit: current_block.gas_limit,
+            timestamp: current_block.timestamp + 2,
+            extra_data: Bytes::new(),
+            base_fee_per_gas: U256::from(100),
+        });
 
         FlashBlock {
             payload_id: PayloadId::default(),

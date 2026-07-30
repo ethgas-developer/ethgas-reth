@@ -43,7 +43,7 @@ impl TestSetup {
     }
 }
 
-fn receipt(cumulative_gas_used: u64) -> Receipt {
+const fn receipt(cumulative_gas_used: u64) -> Receipt {
     Receipt { tx_type: TxType::Eip1559, success: true, cumulative_gas_used, logs: vec![] }
 }
 
@@ -54,8 +54,7 @@ fn build_authorization(
     account: Account,
 ) -> alloy_eips::eip7702::SignedAuthorization {
     let auth = Authorization { chain_id: U256::from(chain_id), address: contract_address, nonce };
-    let signature =
-        account.signer().sign_hash_sync(&auth.signature_hash()).expect("signing works");
+    let signature = account.signer().sign_hash_sync(&auth.signature_hash()).expect("signing works");
     auth.into_signed(signature)
 }
 

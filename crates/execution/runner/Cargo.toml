@@ -78,3 +78,6 @@ tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 ethgas-node-runner = { path = ".", features = ["test-utils"] }
+
+[lints]
+workspace = true

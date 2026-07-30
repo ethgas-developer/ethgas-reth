@@ -1,3 +1,5 @@
+//! Wire types for the flashblock payloads published by the sequencer.
+
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
@@ -104,7 +106,7 @@ pub struct ExecutionPayloadFlashblockDeltaV1 {
 }
 
 /// Internal helper for decoding
-#[derive(Clone, Debug, PartialEq, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub struct FlashblocksPayloadV1 {
     /// The payload id of the flashblock
     pub payload_id: PayloadId,

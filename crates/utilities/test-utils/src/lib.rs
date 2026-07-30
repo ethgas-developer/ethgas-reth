@@ -1,3 +1,6 @@
+//! Shared test utilities: funded accounts, a devnet genesis builder, and
+//! `sol!` bindings for the contracts used across the test suites.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod accounts;

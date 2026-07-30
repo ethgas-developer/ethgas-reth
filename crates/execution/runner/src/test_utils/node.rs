@@ -18,11 +18,7 @@ use reth_node_core::{
 use reth_node_ethereum::EthereumNode;
 use reth_provider::providers::BlockchainProvider;
 
-use crate::{
-    EthgasNodeExtension, NodeHooks,
-    types::EthProvider,
-    test_utils::engine::EngineApi,
-};
+use crate::{EthgasNodeExtension, NodeHooks, test_utils::engine::EngineApi, types::EthProvider};
 
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = EthProvider;

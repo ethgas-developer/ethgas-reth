@@ -1,3 +1,5 @@
+//! Ethgas-specific CLI arguments layered onto reth's node command.
+
 use ethgas_reth_flashblocks::FlashblocksConfig;
 use url::Url;
 

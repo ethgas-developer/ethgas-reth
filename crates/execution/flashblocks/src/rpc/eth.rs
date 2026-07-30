@@ -18,17 +18,19 @@ use jsonrpsee::{
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::EthFilter;
-use reth_rpc_eth_types::EthApiError;
 use reth_rpc_eth_api::{
     EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
+use reth_rpc_eth_types::EthApiError;
 use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
-use crate::metrics::Metrics;
-use crate::traits::{FlashblocksAPI, PendingBlocksAPI};
+use crate::{
+    metrics::Metrics,
+    traits::{FlashblocksAPI, PendingBlocksAPI},
+};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
@@ -97,6 +99,7 @@ pub trait EthApiOverride {
         transaction: TransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256>;
 
     /// Simulates transactions with flashblock state support.
@@ -378,12 +381,14 @@ where
         transaction: TransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
         debug!(
             message = "rpc::estimate_gas",
             transaction = ?transaction,
             block_number = ?block_number,
             overrides = ?overrides,
+            block_overrides = ?block_overrides,
         );
 
         let mut block_id = block_number.unwrap_or_default();
@@ -401,9 +406,14 @@ where
         state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
 
-        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
-            .await
-            .map_err(Into::into)
+        EthCall::estimate_gas_at(
+            &self.eth_api,
+            transaction,
+            block_id,
+            EvmOverrides::new(Some(final_overrides), block_overrides),
+        )
+        .await
+        .map_err(Into::into)
     }
 
     async fn simulate_v1(
@@ -493,7 +503,8 @@ where
         // Always get pending logs when toBlock is pending
         let pending_logs = pending_blocks.get_pending_logs(&filter);
 
-        // Dedup any logs from the pending state that may already have been covered in the historical logs
+        // Dedup any logs from the pending state that may already have been covered in the
+        // historical logs
         let deduped_pending_logs: Vec<Log> = pending_logs
             .iter()
             .filter(|log| !fetched_logs.contains(&(log.block_number, log.log_index)))

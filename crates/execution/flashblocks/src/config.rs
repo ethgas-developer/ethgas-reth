@@ -1,3 +1,5 @@
+//! Configuration for the flashblocks feature.
+
 use std::{sync::Arc, time::Duration};
 
 use url::Url;

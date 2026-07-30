@@ -3,8 +3,8 @@
 
 use eyre::Result;
 use reth_node_builder::{EngineNodeLauncher, Node, NodeHandle, NodeHandleFor, TreeConfig};
-use reth_provider::providers::BlockchainProvider;
 use reth_node_ethereum::EthereumNode;
+use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use crate::{EthgasNodeExtension, FromExtensionConfig, NodeHooks, types::EthgasNodeBuilder};

@@ -32,6 +32,7 @@ use reth_ethereum_primitives::{Block, Receipt, TransactionSigned};
 use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
 use reth_provider::{
     AccountReader, BlockNumReader, BlockReader, CanonStateSubscriptions, ChainSpecProvider,
+    StateProviderFactory,
 };
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tokio::{
@@ -298,6 +299,8 @@ impl FlashblocksBuilderTestHarness {
     /// Get the canonical account state.
     pub fn canonical_account(&self, account: Account) -> RethAccount {
         self.provider
+            .latest()
+            .expect("can get latest state provider")
             .basic_account(&account.address())
             .expect("can lookup account state")
             .expect("should be existing account state")

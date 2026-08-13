@@ -63,7 +63,7 @@ impl EthgasNodeRunner {
                 let engine_tree_config = TreeConfig::default()
                     .with_persistence_threshold(builder.config().engine.persistence_threshold)
                     .with_memory_block_buffer_target(
-                        builder.config().engine.memory_block_buffer_target,
+                        builder.config().engine.memory_block_buffer_target(),
                     );
 
                 let launcher = EngineNodeLauncher::new(

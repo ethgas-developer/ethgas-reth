@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{BlockBody, BlockHeader, Header, Transaction, TxType};
-    use alloy_eips::{BlockHashOrNumber, Encodable2718};
+    use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag, Encodable2718};
     use alloy_genesis::Genesis;
     use alloy_primitives::{
         Address, B256, BlockNumber, Bytes, TxHash, U256, address, b256, bytes,
@@ -92,12 +92,20 @@ mod tests {
                 .expect("able to recover block")
         }
 
-        fn account_state(&self, u: User) -> Account {
-            let basic_account = self
-                .provider
+        fn canonical_account(&self, u: User) -> Account {
+            let latest_block_num =
+                self.provider.last_block_number().expect("should be a latest block");
+
+            self.provider
+                .state_by_block_number_or_tag(BlockNumberOrTag::Number(latest_block_num))
+                .expect("can get state at canonical tip")
                 .basic_account(&self.address(u))
                 .expect("can lookup account state")
-                .expect("should be existing account state");
+                .expect("should be existing account state")
+        }
+
+        fn account_state(&self, u: User) -> Account {
+            let basic_account = self.canonical_account(u);
 
             let nonce = self
                 .flashblocks
@@ -939,12 +947,11 @@ mod tests {
         )
         .await;
 
-        let pending_nonce =
-            test.provider.basic_account(&test.address(User::Alice)).unwrap().unwrap().nonce +
-                test.flashblocks
-                    .get_pending_blocks()
-                    .get_transaction_count(test.address(User::Alice))
-                    .to::<u64>();
+        let pending_nonce = test.canonical_account(User::Alice).nonce +
+            test.flashblocks
+                .get_pending_blocks()
+                .get_transaction_count(test.address(User::Alice))
+                .to::<u64>();
         assert_eq!(pending_nonce, 1);
 
         test.new_canonical_block_without_processing(vec![
@@ -952,12 +959,11 @@ mod tests {
         ])
         .await;
 
-        let pending_nonce =
-            test.provider.basic_account(&test.address(User::Alice)).unwrap().unwrap().nonce +
-                test.flashblocks
-                    .get_pending_blocks()
-                    .get_transaction_count(test.address(User::Alice))
-                    .to::<u64>();
+        let pending_nonce = test.canonical_account(User::Alice).nonce +
+            test.flashblocks
+                .get_pending_blocks()
+                .get_transaction_count(test.address(User::Alice))
+                .to::<u64>();
 
         // This is 2, because canon block has reached the underlying chain
         // but the StateProcessor hasn't processed it

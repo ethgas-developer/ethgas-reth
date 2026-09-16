@@ -586,8 +586,7 @@ where
         while let Some(result) = stream.next().await {
             let canon_state = match result {
                 Ok(canon_state) => canon_state,
-                // Skipped notifications may have carried the receipt we are waiting for, but
-                // ending the stream here would hang the caller until its timeout regardless.
+                // The receipt may have been in a skipped notification; the caller still times out.
                 Err(BroadcastStreamRecvError::Lagged(skipped)) => {
                     warn!(
                         message = "canonical state subscription lagged while awaiting receipt",

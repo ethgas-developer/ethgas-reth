@@ -281,10 +281,8 @@ impl PendingBlocks {
 
     /// Returns the withdrawals for the latest pending block.
     ///
-    /// Two reasons this is not a concatenation. `diff.withdrawals` is cumulative within a block —
-    /// the producer resends the whole set on every flashblock — and `self.flashblocks` accumulates
-    /// across *every* pending block number, so flat-mapping it mixed the next block's withdrawals
-    /// into this one's on top of duplicating them.
+    /// `self.flashblocks` spans every pending block number, and `diff.withdrawals` is cumulative
+    /// within a block, so the answer is the latest block's last flashblock alone.
     fn get_withdrawals(&self) -> Vec<Withdrawal> {
         let block_number = self.latest_header.number;
         self.flashblocks
@@ -676,10 +674,7 @@ mod tests {
         }
     }
 
-    /// `PendingBlocks::flashblocks` accumulates across every pending block number, and
-    /// `diff.withdrawals` is cumulative within a block rather than an increment. So the withdrawals
-    /// served for the latest block must come from that block's last flashblock alone — not
-    /// concatenated across flashblocks, and not mixed with the previous block's.
+    /// Withdrawals must come from the latest block's last flashblock alone.
     #[test]
     fn get_withdrawals_returns_only_the_latest_blocks_set() {
         let block_1 = vec![withdrawal(0), withdrawal(1)];
@@ -687,10 +682,8 @@ mod tests {
 
         let mut builder = PendingBlocksBuilder::new();
         builder.with_flashblocks([
-            // Block 1, cumulative set resent on both of its flashblocks.
             flashblock_with_withdrawals(1, 0, block_1.clone()),
             flashblock_with_withdrawals(1, 1, block_1),
-            // Block 2, likewise.
             flashblock_with_withdrawals(2, 0, block_2.clone()),
             flashblock_with_withdrawals(2, 1, block_2.clone()),
         ]);

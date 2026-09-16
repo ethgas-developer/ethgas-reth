@@ -432,11 +432,9 @@ where
                 slot_number: None,
             };
 
-            // Seed the parent's hash so the `BLOCKHASH` opcode resolves it during pending
-            // execution. On a miss the cache falls through to the provider, which only knows
-            // canonical blocks — so once the pending window spans more than one block, the parent
-            // of every block after the first is itself pending and cannot be looked up. Writing it
-            // into the EIP-2935 ring buffer below is not enough on its own.
+            // A cache miss falls through to the provider, which only knows canonical blocks, so
+            // a pending parent is unresolvable without this. Separate from the EIP-2935 ring
+            // buffer written below; both are needed.
             db.block_hashes.insert(base.block_number - 1, base.parent_hash);
 
             let evm_env = evm_config
@@ -446,12 +444,9 @@ where
 
             // Apply EIP-4788 (beacon root) and EIP-2935 (blockhashes) pre-execution
             // system calls so cached execution matches what the validator computes.
-            // Take the parent hash off the wire rather than hashing `last_block_header`. On the
-            // first iteration that header is the real canonical one and the two agree, but from
-            // the second onwards it is the header this loop assembled a moment ago — a fabrication
-            // (wrong `requests_hash` today, a 21-element header post-Amsterdam) whose hash matches
-            // no real block. `base.parent_hash` is also what the assembled header itself declares
-            // as its parent, so this keeps the ring buffer consistent with what the node serves.
+            // From the second iteration on, `last_block_header` is the header this loop assembled
+            // a moment ago, whose hash matches no real block. The wire value is authoritative, and
+            // is what the assembled header declares as its own parent.
             let parent_hash = base.parent_hash;
             let mut system_caller = SystemCaller::new(self.chain_spec.clone());
             system_caller

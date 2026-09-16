@@ -439,10 +439,12 @@ where
 
             // Apply EIP-4788 (beacon root) and EIP-2935 (blockhashes) pre-execution
             // system calls so cached execution matches what the validator computes.
-            // The builder publishes the parent's real, correctly-sealed hash. `last_block_header`
-            // is the locally assembled header from the previous iteration, which is a fabrication
-            // (wrong `requests_hash` today, a 21-element header post-Amsterdam) and must never be
-            // hashed into the EIP-2935 ring buffer.
+            // Take the parent hash off the wire rather than hashing `last_block_header`. On the
+            // first iteration that header is the real canonical one and the two agree, but from
+            // the second onwards it is the header this loop assembled a moment ago — a fabrication
+            // (wrong `requests_hash` today, a 21-element header post-Amsterdam) whose hash matches
+            // no real block. `base.parent_hash` is also what the assembled header itself declares
+            // as its parent, so this keeps the ring buffer consistent with what the node serves.
             let parent_hash = base.parent_hash;
             let mut system_caller = SystemCaller::new(self.chain_spec.clone());
             system_caller

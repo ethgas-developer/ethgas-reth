@@ -279,9 +279,20 @@ impl PendingBlocks {
         self.transactions.iter().filter(move |tx| tx.block_number.unwrap_or(0) == block_number)
     }
 
-    /// Returns all withdrawals collected from flashblocks.
+    /// Returns the withdrawals for the latest pending block.
+    ///
+    /// Two reasons this is not a concatenation. `diff.withdrawals` is cumulative within a block —
+    /// the producer resends the whole set on every flashblock — and `self.flashblocks` accumulates
+    /// across *every* pending block number, so flat-mapping it mixed the next block's withdrawals
+    /// into this one's on top of duplicating them.
     fn get_withdrawals(&self) -> Vec<Withdrawal> {
-        self.flashblocks.iter().flat_map(|fb| fb.diff.withdrawals.clone()).collect()
+        let block_number = self.latest_header.number;
+        self.flashblocks
+            .iter()
+            .rev()
+            .find(|fb| fb.metadata.block_number == block_number)
+            .map(|fb| fb.diff.withdrawals.clone())
+            .unwrap_or_default()
     }
 
     /// Returns the latest block, optionally with full transaction details.

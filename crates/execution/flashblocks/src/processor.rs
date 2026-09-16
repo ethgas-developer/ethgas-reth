@@ -432,6 +432,13 @@ where
                 slot_number: None,
             };
 
+            // Seed the parent's hash so the `BLOCKHASH` opcode resolves it during pending
+            // execution. On a miss the cache falls through to the provider, which only knows
+            // canonical blocks — so once the pending window spans more than one block, the parent
+            // of every block after the first is itself pending and cannot be looked up. Writing it
+            // into the EIP-2935 ring buffer below is not enough on its own.
+            db.block_hashes.insert(base.block_number - 1, base.parent_hash);
+
             let evm_env = evm_config
                 .next_evm_env(&last_block_header, &block_env_attributes)
                 .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;

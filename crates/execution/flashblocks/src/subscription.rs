@@ -3,7 +3,10 @@
 use std::{io::Read, sync::Arc, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
-use tokio::{sync::mpsc, time::interval};
+use tokio::{
+    sync::mpsc,
+    time::{Instant, interval_at},
+};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, trace, warn};
 use url::Url;
@@ -29,21 +32,19 @@ pub struct FlashblocksSubscriber<Receiver> {
     flashblocks_state: Arc<Receiver>,
     metrics: Metrics,
     ws_url: Url,
+    ping_interval: Duration,
 }
 
 impl<Receiver> FlashblocksSubscriber<Receiver>
 where
     Receiver: FlashblocksReceiver + Send + Sync + 'static,
 {
-    /// Interval of liveness check of upstream, in milliseconds.
-    pub const PING_INTERVAL_MS: u64 = 500;
-
     /// Max duration of backoff before reconnecting to upstream.
     pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
 
     /// Creates a new flashblocks subscriber.
-    pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url) -> Self {
-        Self { ws_url, flashblocks_state, metrics: Metrics::default() }
+    pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url, ping_interval: Duration) -> Self {
+        Self { ws_url, flashblocks_state, metrics: Metrics::default(), ping_interval }
     }
 
     /// Starts the WebSocket subscription to receive flashblocks.
@@ -54,6 +55,7 @@ where
         );
 
         let ws_url = self.ws_url.clone();
+        let ping_period = self.ping_interval;
 
         let (sender, mut mailbox) = mpsc::channel(100);
         let metrics = self.metrics.clone();
@@ -68,7 +70,7 @@ where
                         info!(message = "WebSocket connection established");
 
                         let mut ping_interval =
-                            interval(Duration::from_millis(Self::PING_INTERVAL_MS));
+                            interval_at(Instant::now() + ping_period, ping_period);
                         let mut awaiting_pong_resp = false;
 
                         let (mut write, mut read) = ws_stream.split();
@@ -134,7 +136,7 @@ where
                                           warn!(
                                             target: "flashblocks_rpc::subscription",
                                             ?backoff,
-                                            timeout_ms = Self::PING_INTERVAL_MS,
+                                            timeout = ?ping_period,
                                             "No pong response from upstream, reconnecting",
                                         );
 

@@ -574,7 +574,10 @@ where
                         let existing_override = state_overrides.entry(*addr).or_default();
                         existing_override.balance = Some(acc.info.balance);
                         existing_override.nonce = Some(acc.info.nonce);
-                        existing_override.code = acc.info.code.clone().map(|code| code.bytes());
+                        // `bytes()` returns revm's analysed bytecode, which is jump-table padded.
+                        // The override must carry the original deployed code.
+                        existing_override.code =
+                            acc.info.code.clone().map(|code| code.original_bytes());
 
                         let existing =
                             existing_override.state_diff.get_or_insert_with(Default::default);

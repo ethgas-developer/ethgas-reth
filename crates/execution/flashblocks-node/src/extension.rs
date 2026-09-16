@@ -9,8 +9,11 @@ use ethgas_reth_flashblocks::{
     FlashblocksSubscriber,
 };
 use reth_provider::CanonStateSubscriptions;
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-use tracing::info;
+use tokio_stream::{
+    StreamExt,
+    wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
+};
+use tracing::{info, warn};
 
 /// Helper struct that wires the Flashblocks feature (canonical subscription and RPC) into the node
 /// builder.
@@ -51,10 +54,22 @@ impl EthgasNodeExtension for FlashblocksExtension {
             let mut canonical_stream =
                 BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
             tokio::spawn(async move {
-                while let Some(Ok(notification)) = canonical_stream.next().await {
-                    let committed = notification.committed();
-                    for block in committed.blocks_iter() {
-                        state_for_canonical.on_canonical_block_received(block);
+                while let Some(result) = canonical_stream.next().await {
+                    match result {
+                        Ok(notification) => {
+                            let committed = notification.committed();
+                            for block in committed.blocks_iter() {
+                                state_for_canonical.on_canonical_block_received(block);
+                            }
+                        }
+                        // A lagged receiver must not end the stream: dropping out here leaves
+                        // pending state serving a head that never advances again.
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            warn!(
+                                message = "canonical state subscription lagged",
+                                skipped_notifications = skipped,
+                            );
+                        }
                     }
                 }
             });

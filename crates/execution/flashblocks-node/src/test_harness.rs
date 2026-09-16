@@ -162,8 +162,7 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
                                     state_for_canonical.on_canonical_block_received(block);
                                 }
                             }
-                            // Mirrors the production site in extension.rs. While this swallowed
-                            // the error, no test here could tell correct behaviour from broken.
+                            // Mirrors the production site in extension.rs.
                             Err(BroadcastStreamRecvError::Lagged(_)) => {}
                         }
                     }

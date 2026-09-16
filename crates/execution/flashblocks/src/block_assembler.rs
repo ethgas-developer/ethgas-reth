@@ -62,10 +62,7 @@ impl BlockAssembler {
             .flat_map(|flashblock| flashblock.diff.transactions.clone())
             .collect();
 
-        // `diff.withdrawals` is the *cumulative* withdrawal set for the block: the producer
-        // resends the whole list on every flashblock rather than slicing it the way it slices
-        // `transactions`. Concatenating it duplicated the set once per flashblock and corrupted
-        // `withdrawals_root`. Read it off the latest flashblock, like every other cumulative field.
+        // Cumulative, not an increment: the producer resends the whole list on every flashblock.
         let withdrawals: Vec<Withdrawal> = latest_flashblock.diff.withdrawals.clone();
         if flashblocks.iter().any(|flashblock| {
             !flashblock.diff.withdrawals.is_empty() && flashblock.diff.withdrawals != withdrawals
@@ -194,9 +191,6 @@ mod tests {
 
     #[test]
     fn test_withdrawals_are_cumulative_not_concatenated() {
-        // The producer resends the whole withdrawal set on every flashblock rather than slicing
-        // it, so the assembler must read it off the latest flashblock. Concatenating duplicated
-        // the set once per flashblock and corrupted `withdrawals_root`.
         let withdrawals = vec![
             Withdrawal { index: 0, validator_index: 1, address: Address::ZERO, amount: 100 },
             Withdrawal { index: 1, validator_index: 2, address: Address::ZERO, amount: 200 },

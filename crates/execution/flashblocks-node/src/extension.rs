@@ -62,8 +62,7 @@ impl EthgasNodeExtension for FlashblocksExtension {
                                 state_for_canonical.on_canonical_block_received(block);
                             }
                         }
-                        // A lagged receiver must not end the stream: dropping out here leaves
-                        // pending state serving a head that never advances again.
+                        // Ending the stream here would freeze pending state at the current head.
                         Err(BroadcastStreamRecvError::Lagged(skipped)) => {
                             warn!(
                                 message = "canonical state subscription lagged",

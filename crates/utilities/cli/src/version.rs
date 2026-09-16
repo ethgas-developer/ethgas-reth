@@ -5,7 +5,7 @@ use reth_node_core::version::{
     RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata,
 };
 
-/// Encapsulates versioning utilities for Base binaries.
+/// Encapsulates versioning utilities for `ETHGas` binaries.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Version;
 
@@ -20,7 +20,7 @@ impl Version {
     /// Panics if unable to initialize version metadata.
     pub fn init_reth(version: &'static str, pkg_name: &'static str) {
         let default = default_reth_version_metadata();
-        let client_version = format!("base/v{version}");
+        let client_version = format!("ethgas/v{version}");
 
         try_init_version_metadata(RethCliVersionConsts {
             name_client: pkg_name.to_string().into(),
@@ -32,17 +32,17 @@ impl Version {
         .expect("Unable to init version metadata");
     }
 
-    /// Exposes version information over Prometheus as `base_info{version="..."}`.
+    /// Exposes version information over Prometheus as `ethgas_info{version="..."}`.
     pub fn register_metrics(version: &'static str) {
         let labels: [(&str, &str); 1] = [("version", version)];
-        let gauge = gauge!("base_info", &labels);
+        let gauge = gauge!("ethgas_info", &labels);
         gauge.set(1);
     }
 }
 
 /// Initializes Reth's global version metadata.
 ///
-/// Use this in execution layer binaries (base-node-reth, base-builder) that need
+/// Use this in execution layer binaries (`ethgas-node`) that need
 /// Reth's global version metadata initialized for P2P identification and logging.
 ///
 /// This macro must be called from the binary crate to capture the correct package metadata.
@@ -53,7 +53,7 @@ macro_rules! init_reth {
     };
 }
 
-/// Registers version information as Prometheus metrics (`base_info{version="..."}`).
+/// Registers version information as Prometheus metrics (`ethgas_info{version="..."}`).
 #[macro_export]
 macro_rules! register_version_metrics {
     () => {

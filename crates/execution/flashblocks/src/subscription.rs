@@ -14,6 +14,9 @@ use crate::{
     traits::FlashblocksReceiver,
 };
 
+/// Maximum size of a flashblock payload after decoding, in bytes.
+const MAX_DECODED_FLASHBLOCK_BYTES: usize = 5 * 1024 * 1024;
+
 // Simplify actor messages to just handle shutdown
 #[derive(Debug)]
 enum ActorMessage {
@@ -199,6 +202,7 @@ fn try_decode_message(bytes: &[u8]) -> eyre::Result<FlashBlock> {
 }
 
 fn try_decode_plaintext_message(text: &str) -> eyre::Result<FlashBlock> {
+    ensure_within_size_limit(text.len())?;
     parse_flashblock_json(text)
 }
 
@@ -227,16 +231,79 @@ fn parse_flashblock_json(text: &str) -> eyre::Result<FlashBlock> {
 }
 
 fn try_parse_message(bytes: &[u8]) -> eyre::Result<String> {
-    if let Ok(text) = String::from_utf8(bytes.to_vec()) &&
+    if let Ok(text) = std::str::from_utf8(bytes) &&
         text.trim_start().starts_with('{')
     {
-        return Ok(text);
+        ensure_within_size_limit(bytes.len())?;
+        return Ok(text.to_owned());
     }
-
-    let mut decompressor = brotli::Decompressor::new(bytes, 4096);
+    
+    let mut decompressor =
+        brotli::Decompressor::new(bytes, 4096).take(MAX_DECODED_FLASHBLOCK_BYTES as u64 + 1);
     let mut decompressed = Vec::new();
     decompressor.read_to_end(&mut decompressed)?;
+    ensure_within_size_limit(decompressed.len())?;
 
     let text = String::from_utf8(decompressed)?;
     Ok(text)
+}
+
+fn ensure_within_size_limit(len: usize) -> eyre::Result<()> {
+    eyre::ensure!(
+        len <= MAX_DECODED_FLASHBLOCK_BYTES,
+        "flashblock payload too large: {len} bytes, max {MAX_DECODED_FLASHBLOCK_BYTES}"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::*;
+
+    fn brotli_compress(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut writer = brotli::CompressorWriter::new(&mut out, 4096, 11, 22);
+        writer.write_all(bytes).expect("compress");
+        drop(writer);
+        out
+    }
+
+    #[test]
+    fn decompression_bomb_is_rejected() {
+        // ~64 MiB of highly compressible input squeezes into a few KB on the wire.
+        let bomb = brotli_compress(&vec![b'a'; 64 * 1024 * 1024]);
+        assert!(bomb.len() < 64 * 1024, "bomb should be small on the wire, got {}", bomb.len());
+
+        // Match on the result rather than unwrapping it: if this ever regresses, the decoded
+        // payload is 64 MiB and a panic message carrying it would swamp the test output.
+        match try_parse_message(&bomb) {
+            Err(err) => assert!(err.to_string().contains("too large"), "unexpected error: {err}"),
+            Ok(decoded) => panic!("bomb accepted, decoded {} bytes", decoded.len()),
+        }
+    }
+
+    #[test]
+    fn brotli_payload_within_limit_is_accepted() {
+        let json = r#"{"payload_id":"0x0000000000000000"}"#;
+        let parsed = try_parse_message(&brotli_compress(json.as_bytes())).expect("accepted");
+        assert_eq!(parsed, json);
+    }
+
+    #[test]
+    fn plaintext_payload_is_accepted() {
+        let json = r#"{"payload_id":"0x0000000000000000"}"#;
+        assert_eq!(try_parse_message(json.as_bytes()).expect("accepted"), json);
+    }
+
+    #[test]
+    fn oversized_plaintext_is_rejected() {
+        let mut json = String::from("{\"a\":\"");
+        json.push_str(&"x".repeat(MAX_DECODED_FLASHBLOCK_BYTES));
+        json.push_str("\"}");
+
+        let err = try_parse_message(json.as_bytes()).expect_err("must reject");
+        assert!(err.to_string().contains("too large"), "unexpected error: {err}");
+    }
 }

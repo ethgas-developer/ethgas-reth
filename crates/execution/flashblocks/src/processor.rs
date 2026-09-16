@@ -1,6 +1,12 @@
 //! Flashblocks state processor.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use alloy_consensus::{
     Header, TxEnvelope, TxReceipt,
@@ -32,6 +38,7 @@ use crate::{
     block_assembler::BlockAssembler,
     cache::FlashblockCache,
     error::{ProviderError, StateProcessorError},
+    metrics::Metrics,
     payload::FlashBlock,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
     validation::{
@@ -59,6 +66,8 @@ pub struct StateProcessor<Client> {
     chain_spec: Arc<ChainSpec>,
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
+    last_canonical_block: Arc<AtomicU64>,
+    metrics: Metrics,
 }
 
 impl<Client> StateProcessor<Client>
@@ -77,6 +86,7 @@ where
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         chain_spec: Arc<ChainSpec>,
         sender: Sender<Arc<PendingBlocks>>,
+        last_canonical_block: Arc<AtomicU64>,
     ) -> Self {
         let cache = client
             .best_block_number()
@@ -90,6 +100,8 @@ where
             chain_spec,
             sender,
             cache: Arc::new(Mutex::new(cache)),
+            last_canonical_block,
+            metrics: Metrics::default(),
         }
     }
 
@@ -139,11 +151,31 @@ where
         }
     }
 
+    /// Whether the flashblock's block is already canonical.
+    ///
+    /// The queue carries canonical blocks and flashblocks together and is drained FIFO, so a
+    /// flashblock that was current when it arrived can be stale by the time it is applied.
+    /// Applying one anyway fails sequence validation and clears the healthy snapshot built for a
+    /// later block.
+    fn is_superseded(&self, flashblock: &FlashBlock) -> bool {
+        flashblock.metadata.block_number <= self.last_canonical_block.load(Ordering::Relaxed)
+    }
+
     async fn apply_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: FlashBlock,
     ) {
+        if self.is_superseded(&flashblock) {
+            debug!(
+                message = "skipping flashblock for an already canonical block",
+                block_number = flashblock.metadata.block_number,
+                flashblock_index = flashblock.index,
+            );
+            self.metrics.flashblock_superseded.increment(1);
+            return;
+        }
+
         match self.process_flashblock(prev_pending_blocks, &flashblock) {
             Ok(new_pending_blocks) => {
                 if let Some(ref pb) = new_pending_blocks {

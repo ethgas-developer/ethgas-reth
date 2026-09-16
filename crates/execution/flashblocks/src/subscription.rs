@@ -237,7 +237,7 @@ fn try_parse_message(bytes: &[u8]) -> eyre::Result<String> {
         ensure_within_size_limit(bytes.len())?;
         return Ok(text.to_owned());
     }
-    
+
     let mut decompressor =
         brotli::Decompressor::new(bytes, 4096).take(MAX_DECODED_FLASHBLOCK_BYTES as u64 + 1);
     let mut decompressed = Vec::new();

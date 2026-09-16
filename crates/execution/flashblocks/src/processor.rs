@@ -439,7 +439,11 @@ where
 
             // Apply EIP-4788 (beacon root) and EIP-2935 (blockhashes) pre-execution
             // system calls so cached execution matches what the validator computes.
-            let parent_hash = last_block_header.hash_slow();
+            // The builder publishes the parent's real, correctly-sealed hash. `last_block_header`
+            // is the locally assembled header from the previous iteration, which is a fabrication
+            // (wrong `requests_hash` today, a 21-element header post-Amsterdam) and must never be
+            // hashed into the EIP-2935 ring buffer.
+            let parent_hash = base.parent_hash;
             let mut system_caller = SystemCaller::new(self.chain_spec.clone());
             system_caller
                 .apply_blockhashes_contract_call(parent_hash, &mut evm)

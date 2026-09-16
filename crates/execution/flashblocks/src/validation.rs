@@ -80,7 +80,19 @@ impl FlashblockSequenceValidator {
 pub enum ReorgDetectionResult {
     /// Transaction sets match exactly.
     NoReorg,
-    /// Transaction sets differ (counts included for diagnostics).
+    /// Pending tracked no transactions for a canonical block that has some.
+    Untracked {
+        /// Number of transactions in the canonical chain set.
+        canonical_count: usize,
+    },
+    /// Canonical starts with everything tracked and appends more, such as the builder's payout.
+    CanonicalExtendsTracked {
+        /// Number of transactions in the tracked (pending) set.
+        tracked_count: usize,
+        /// Number of transactions in the canonical chain set.
+        canonical_count: usize,
+    },
+    /// Transaction sets diverge (counts included for diagnostics).
     ReorgDetected {
         /// Number of transactions in the tracked (pending) set.
         tracked_count: usize,
@@ -101,6 +113,12 @@ impl ReorgDetectionResult {
     pub const fn is_no_reorg(&self) -> bool {
         matches!(self, Self::NoReorg)
     }
+
+    /// Returns `true` if pending must be rebuilt from the canonical block.
+    #[inline]
+    pub const fn requires_rebuild(&self) -> bool {
+        !matches!(self, Self::NoReorg)
+    }
 }
 
 /// Detects chain reorganizations by comparing transaction hash sets.
@@ -108,15 +126,24 @@ impl ReorgDetectionResult {
 pub struct ReorgDetector;
 
 impl ReorgDetector {
-    /// Compares tracked vs canonical transaction hashes to detect reorgs.
+    /// Compares tracked vs canonical transaction hashes.
     ///
-    /// Returns `ReorgDetected` if counts differ, hashes differ, or order differs.
+    /// Returns `NoReorg` only on an exact match; the other variants say how they differ.
     pub fn detect(
         tracked_tx_hashes: &[B256],
         canonical_tx_hashes: &[B256],
     ) -> ReorgDetectionResult {
-        if tracked_tx_hashes == canonical_tx_hashes {
+        // The empty check runs first because every empty slice satisfies the prefix test, and
+        // excludes an empty canonical block so that empty-vs-empty still matches exactly.
+        if tracked_tx_hashes.is_empty() && !canonical_tx_hashes.is_empty() {
+            ReorgDetectionResult::Untracked { canonical_count: canonical_tx_hashes.len() }
+        } else if tracked_tx_hashes == canonical_tx_hashes {
             ReorgDetectionResult::NoReorg
+        } else if canonical_tx_hashes.starts_with(tracked_tx_hashes) {
+            ReorgDetectionResult::CanonicalExtendsTracked {
+                tracked_count: tracked_tx_hashes.len(),
+                canonical_count: canonical_tx_hashes.len(),
+            }
         } else {
             ReorgDetectionResult::ReorgDetected {
                 tracked_count: tracked_tx_hashes.len(),
@@ -159,7 +186,7 @@ impl CanonicalBlockReconciler {
         pending_latest_block: Option<u64>,
         canonical_block_number: u64,
         max_depth: u64,
-        reorg_detected: bool,
+        requires_rebuild: bool,
     ) -> ReconciliationStrategy {
         // Check if pending state exists
         let (earliest, latest) = match (pending_earliest_block, pending_latest_block) {
@@ -172,8 +199,8 @@ impl CanonicalBlockReconciler {
             return ReconciliationStrategy::CatchUp;
         }
 
-        // Check for reorg
-        if reorg_detected {
+        // Rebuild from canonical unless pending's view of the block matched it exactly
+        if requires_rebuild {
             return ReconciliationStrategy::HandleReorg;
         }
 
@@ -252,10 +279,15 @@ mod tests {
     #[case(&[0x01, 0x02], &[0x02, 0x01], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]
     // Reorg cases - different counts
     #[case(&[0x01, 0x02, 0x03], &[0x01, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 2 })]
-    #[case(&[0x01], &[0x01, 0x02, 0x03], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 3 })]
-    #[case(&[], &[0x01], ReorgDetectionResult::ReorgDetected { tracked_count: 0, canonical_count: 1 })]
+    #[case(&[0x01], &[0x01, 0x02, 0x03], ReorgDetectionResult::CanonicalExtendsTracked { tracked_count: 1, canonical_count: 3 })]
+    #[case(&[], &[0x01], ReorgDetectionResult::Untracked { canonical_count: 1 })]
     #[case(&[0x01], &[], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 0 })]
     #[case(&[0x01, 0x01, 0x02], &[0x01, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 2 })]
+    // Canonical extends the tracked prefix - the builder's payout and refund suffix
+    #[case(&[0x01, 0x02], &[0x01, 0x02, 0x03], ReorgDetectionResult::CanonicalExtendsTracked { tracked_count: 2, canonical_count: 3 })]
+    #[case(&[0x01, 0x02], &[0x01, 0x02, 0x03, 0x04], ReorgDetectionResult::CanonicalExtendsTracked { tracked_count: 2, canonical_count: 4 })]
+    // A suffix that reorders the tracked prefix is a genuine divergence, not an extension
+    #[case(&[0x01, 0x02], &[0x01, 0x03, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 3 })]
     // Reorg cases - same count, different hashes
     #[case(&[0x01, 0x02], &[0x03, 0x04], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]
     #[case(&[0x01, 0x02], &[0x01, 0x03], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]
@@ -273,6 +305,9 @@ mod tests {
             result.is_reorg(),
             matches!(expected, ReorgDetectionResult::ReorgDetected { .. })
         );
+        assert_eq!(result.requires_rebuild(), !matches!(expected, ReorgDetectionResult::NoReorg));
+        // Every difference gates the rebuild, an extension included.
+        assert_eq!(result.requires_rebuild(), tracked != canonical);
     }
 
     // ==================== CanonicalBlockReconciler Tests ====================

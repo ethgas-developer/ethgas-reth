@@ -43,7 +43,7 @@ use crate::{
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
-        ReorgDetector, SequenceValidationResult,
+        ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
     },
 };
 
@@ -247,7 +247,8 @@ where
             block.body().transactions().map(|tx| *tx.tx_hash()).collect();
 
         let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
-        let reorg_detected = reorg_result.is_reorg();
+        // Anything short of an exact match must rebuild from canonical.
+        let requires_rebuild = reorg_result.requires_rebuild();
 
         // Determine the reconciliation strategy
         let strategy = CanonicalBlockReconciler::reconcile(
@@ -255,7 +256,7 @@ where
             Some(pending_blocks.latest_block_number()),
             block.number,
             self.max_depth,
-            reorg_detected,
+            requires_rebuild,
         );
 
         match strategy {
@@ -265,17 +266,43 @@ where
                     latest_pending_block = pending_blocks.latest_block_number(),
                     canonical_block = block.number,
                 );
+                self.metrics.pending_clear_catchup.increment(1);
                 Ok(None)
             }
             ReconciliationStrategy::HandleReorg => {
-                warn!(
-                    message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
-                    tracked_txn_hashes = ?tracked_txn_hashes,
-                    block_txn_hashes = ?block_txn_hashes,
-                );
+                match reorg_result {
+                    ReorgDetectionResult::CanonicalExtendsTracked {
+                        tracked_count,
+                        canonical_count,
+                    } => {
+                        self.metrics.pending_rebase_canonical_extended.increment(1);
+                        debug!(
+                            message = "canonical extended the tracked transactions, rebasing pending onto it",
+                            canonical_block = block.number,
+                            tracked_count,
+                            canonical_count,
+                        );
+                    }
+                    ReorgDetectionResult::Untracked { canonical_count } => {
+                        self.metrics.pending_rebase_untracked.increment(1);
+                        debug!(
+                            message = "no transactions tracked for the canonical block, rebasing pending onto it",
+                            canonical_block = block.number,
+                            canonical_count,
+                        );
+                    }
+                    _ => {
+                        self.metrics.pending_clear_reorg.increment(1);
+                        warn!(
+                            message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
+                            tracked_txn_hashes = ?tracked_txn_hashes,
+                            block_txn_hashes = ?block_txn_hashes,
+                        );
+                    }
+                }
 
-                // If there is a reorg, we re-process all future flashblocks without reusing the
-                // existing pending state
+                // The previous bundle is dropped, not reused: its post-values for this block
+                // would shadow the canonical state being rebased onto.
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
                 self.build_pending_state(None, &flashblocks)
             }

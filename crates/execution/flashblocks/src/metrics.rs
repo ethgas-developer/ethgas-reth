@@ -31,6 +31,10 @@ pub struct Metrics {
     #[metric(describe = "Number of Flashblocks that arrive in an unexpected order")]
     pub unexpected_block_order: Counter,
 
+    /// Number of flashblocks dropped because their block is already canonical.
+    #[metric(describe = "Number of flashblocks dropped because their block is already canonical")]
+    pub flashblock_superseded: Counter,
+
     /// Number of flashblocks contained within a single block.
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,

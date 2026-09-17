@@ -9,13 +9,19 @@ use reth_chainspec::ChainSpec;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
-use reth_node_builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
+use reth_node_builder::{
+    Node, NodeBuilder, NodeConfig, NodeHandle,
+    rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder, Identity, RpcAddOns},
+};
 use reth_node_core::{
     args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_node_ethereum::EthereumNode;
+use reth_node_ethereum::{
+    EthereumNode,
+    node::{EthereumAddOns, EthereumEngineValidatorBuilder},
+};
 use reth_provider::providers::BlockchainProvider;
 
 use crate::{EthgasNodeExtension, NodeHooks, test_utils::engine::EngineApi, types::EthProvider};
@@ -93,7 +99,14 @@ impl LocalNode {
             .with_launch_context(exec.clone())
             .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
             .with_components(eth_node.components_builder())
-            .with_add_ons(eth_node.add_ons())
+            .with_add_ons(EthereumAddOns::new(RpcAddOns::new(
+                crate::eth_api::EthgasEthApiBuilder,
+                EthereumEngineValidatorBuilder::default(),
+                BasicEngineApiBuilder::default(),
+                BasicEngineValidatorBuilder::default(),
+                Default::default(),
+                Identity::new(),
+            )))
             .on_component_initialized(move |_ctx| Ok(()));
 
         let NodeHandle { node: node_handle, node_exit_future } = extensions

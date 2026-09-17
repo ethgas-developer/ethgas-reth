@@ -2,10 +2,13 @@
 
 use reth_chainspec::ChainSpec;
 use reth_node_builder::{
-    FullNodeTypesAdapter, Node, NodeBuilder, NodeComponentsBuilder, NodeTypesWithDBAdapter,
-    WithLaunchContext,
+    FullNodeTypesAdapter, Node, NodeAdapter, NodeBuilder, NodeComponentsBuilder,
+    NodeTypesWithDBAdapter, WithLaunchContext,
 };
-use reth_node_ethereum::EthereumNode;
+use reth_node_ethereum::{
+    EthereumNode,
+    node::{EthereumAddOns, EthereumEngineValidatorBuilder},
+};
 use reth_provider::providers::BlockchainProvider;
 
 /// The database environment type used by the node.
@@ -21,7 +24,11 @@ pub type EthProvider = BlockchainProvider<NodeTypesWithDBAdapter<EthereumNode, D
 pub(crate) type EthComponentsBuilder = <EthereumNode as Node<EthNodeTypes>>::ComponentsBuilder;
 
 /// Internal alias for the Ethereum node add-ons.
-pub(crate) type EthAddOns = <EthereumNode as Node<EthNodeTypes>>::AddOns;
+pub type EthAddOns = EthereumAddOns<
+    NodeAdapter<EthNodeTypes, EthComponents>,
+    crate::eth_api::EthgasEthApiBuilder,
+    EthereumEngineValidatorBuilder,
+>;
 
 /// Internal alias for the Ethereum components type.
 pub(crate) type EthComponents =

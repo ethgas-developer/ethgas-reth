@@ -54,6 +54,7 @@ impl BlockAssembler {
     /// Returns an error if:
     /// - The flashblocks slice is empty
     /// - The first flashblock is missing its base payload
+    /// - A transaction in the block has no receipt on the wire
     /// - Block conversion fails
     pub fn assemble(
         spec: &impl EthExecutorSpec,

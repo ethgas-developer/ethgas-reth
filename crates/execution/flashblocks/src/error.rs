@@ -50,6 +50,12 @@ pub enum ExecutionError {
         /// The reason for the execution failure.
         reason: String,
     },
+    /// A transaction in the block has no receipt on the wire.
+    #[error("missing receipt for tx {tx_hash}")]
+    MissingReceipt {
+        /// The hash of the transaction whose receipt is absent.
+        tx_hash: B256,
+    },
 
     /// ECDSA signature recovery failed.
     #[error("sender recovery failed: {0}")]

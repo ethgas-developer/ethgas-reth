@@ -14,8 +14,10 @@ use reth_node_builder::rpc::{
     BasicEngineApiBuilder, BasicEngineValidatorBuilder, Identity, RpcAddOns,
 };
 
+use std::sync::Arc;
+
 use crate::{
-    EthgasNodeExtension, FromExtensionConfig, NodeHooks,
+    EthgasNodeExtension, FromExtensionConfig, NodeHooks, PendingStateSource,
     builder::EthNodeAdapter,
     eth_api::EthgasEthApiBuilder,
     types::{EthAddOns, EthgasNodeBuilder},
@@ -26,12 +28,22 @@ use crate::{
 pub struct EthgasNodeRunner {
     /// Registered builder extensions.
     extensions: Vec<Box<dyn EthgasNodeExtension>>,
+    /// Supplies the pending state the `eth` API answers the `pending` tag from.
+    pending_state: Option<Arc<dyn PendingStateSource>>,
 }
 
 impl EthgasNodeRunner {
     /// Creates a new runner.
     pub fn new() -> Self {
-        Self { extensions: Vec::new() }
+        Self { extensions: Vec::new(), pending_state: None }
+    }
+
+    /// Sets the source the `eth` API answers the `pending` tag from.
+    ///
+    /// Without it, `pending` resolves to the canonical tip for every method the node does not
+    /// override
+    pub fn set_pending_state(&mut self, pending_state: Option<Arc<dyn PendingStateSource>>) {
+        self.pending_state = pending_state;
     }
 
     /// Registers a new builder extension.
@@ -42,15 +54,16 @@ impl EthgasNodeRunner {
     /// Applies all Ethgas-specific wiring to the supplied builder, launches the node, and waits
     /// for shutdown.
     pub async fn run(self, builder: EthgasNodeBuilder) -> Result<()> {
-        let Self { extensions } = self;
+        let Self { extensions, pending_state } = self;
         let NodeHandle { node: _node, node_exit_future } =
-            Self::launch_node(extensions, builder).await?;
+            Self::launch_node(extensions, pending_state, builder).await?;
         node_exit_future.await?;
         Ok(())
     }
 
     async fn launch_node(
         extensions: Vec<Box<dyn EthgasNodeExtension>>,
+        pending_state: Option<Arc<dyn PendingStateSource>>,
         builder: EthgasNodeBuilder,
     ) -> Result<NodeHandle<EthNodeAdapter, EthAddOns>> {
         info!(target: "ethgas-runner", "starting custom Ethgas node");
@@ -61,7 +74,7 @@ impl EthgasNodeRunner {
             .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
             .with_components(ethgas_node.components_builder())
             .with_add_ons(EthereumAddOns::new(RpcAddOns::new(
-                EthgasEthApiBuilder,
+                EthgasEthApiBuilder::new(pending_state),
                 EthereumEngineValidatorBuilder::default(),
                 BasicEngineApiBuilder::default(),
                 BasicEngineValidatorBuilder::default(),

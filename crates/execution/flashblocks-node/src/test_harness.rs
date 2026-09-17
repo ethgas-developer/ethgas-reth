@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use crate::FlashblocksPendingState;
 use alloy_consensus::Transaction;
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{
@@ -20,7 +21,7 @@ use alloy_primitives::{
 use alloy_rpc_types_engine::PayloadId;
 use derive_more::Deref;
 use ethgas_node_runner::{
-    EthgasNodeExtension, NodeHooks,
+    EthgasNodeExtension, NodeHooks, PendingStateSource,
     test_utils::{
         Account, LocalNode, LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness,
         build_test_genesis, init_silenced_tracing,
@@ -250,8 +251,12 @@ impl FlashblocksHarness {
         let extension = FlashblocksTestExtension::new(process_canonical);
         let parts_source = extension.clone();
 
+        let pending_state: Arc<dyn PendingStateSource> =
+            Arc::new(FlashblocksPendingState::new(parts_source.parts()?.state()));
+
         // Launch the node with the flashblocks extension
-        let node = LocalNode::new(vec![Box::new(extension)], chain_spec).await?;
+        let node =
+            LocalNode::new(vec![Box::new(extension)], chain_spec, Some(pending_state)).await?;
         let engine = node.engine_api()?;
 
         tokio::time::sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

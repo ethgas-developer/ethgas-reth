@@ -18,7 +18,7 @@ use tokio::time::sleep;
 use ethgas_test_utils::build_test_genesis;
 
 use crate::{
-    EthgasNodeExtension, FromExtensionConfig,
+    EthgasNodeExtension, FromExtensionConfig, PendingStateSource,
     test_utils::{
         constants::{BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, NODE_STARTUP_DELAY_MS},
         engine::EngineApi,
@@ -32,6 +32,7 @@ use crate::{
 pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn EthgasNodeExtension>>,
     chain_spec: Option<Arc<ChainSpec>>,
+    pending_state: Option<Arc<dyn PendingStateSource>>,
 }
 
 impl TestHarnessBuilder {
@@ -58,6 +59,12 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Set the source the `eth` API answers the `pending` tag from.
+    pub fn with_pending_state(mut self, pending_state: Arc<dyn PendingStateSource>) -> Self {
+        self.pending_state = Some(pending_state);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -67,7 +74,7 @@ impl TestHarnessBuilder {
             Arc::new(ChainSpec::from(genesis))
         });
 
-        let node = LocalNode::new(self.extensions, chain_spec).await?;
+        let node = LocalNode::new(self.extensions, chain_spec, self.pending_state).await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

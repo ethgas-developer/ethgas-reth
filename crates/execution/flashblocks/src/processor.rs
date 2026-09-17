@@ -10,7 +10,7 @@ use std::{
 };
 
 use alloy_consensus::{
-    Header, TxEnvelope, TxReceipt,
+    Header, Sealable, TxEnvelope, TxReceipt,
     transaction::{Recovered, SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::BlockNumberOrTag;
@@ -554,6 +554,8 @@ where
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?
             .ok_or(ProviderError::MissingCanonicalHeader { block_number: canonical_block })?;
 
+        let anchor = last_block_header.clone().seal_slow();
+
         let evm_config = EthEvmConfig::ethereum(self.chain_spec.clone());
 
         let state_provider = self
@@ -808,6 +810,7 @@ where
         // Extract the accumulated bundle state.
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
+        pending_blocks_builder.with_anchor(anchor);
         pending_blocks_builder.with_state_overrides(state_overrides);
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }

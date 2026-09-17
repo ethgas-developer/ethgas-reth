@@ -721,6 +721,79 @@ fn logs_payload(logs: Vec<PrimitiveLog>) -> FlashBlock {
     }
 }
 
+// ============================ pending state (the overlay) ============================
+//
+// `EthgasEthApi::local_pending_state` returns a flashblocks-backed provider, so methods this node
+// does not override answer `pending` from the snapshot instead of the canonical tip. The contract
+// below is deployed inside flashblock 1 and never lands canonically, so canonical and pending must
+// disagree about it.
+
+#[tokio::test]
+async fn test_pending_code_and_storage_come_from_flashblocks() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    let counter = setup.txn_details.counter_address;
+
+    // Nothing is deployed yet, on either tag.
+    assert!(provider.get_code_at(counter).await?.is_empty());
+    assert!(provider.get_code_at(counter).pending().await?.is_empty());
+
+    // Sent one at a time, with a pending read between them. The counter is deployed only in the
+    // second flashblock, so an overlay that is built once and never invalidated would still be
+    // reporting the first snapshot here and would fail the assertion below.
+    setup.send_flashblock(setup.create_first_payload()).await?;
+    assert!(
+        provider.get_code_at(counter).pending().await?.is_empty(),
+        "the first flashblock deploys nothing"
+    );
+
+    setup.send_flashblock(setup.create_second_payload()).await?;
+
+    // eth_getCode is not one of the eleven overridden methods, so this only passes if
+    // local_pending_state served the flashblocks bundle.
+    let pending_code = provider.get_code_at(counter).pending().await?;
+    assert_eq!(
+        pending_code,
+        DoubleCounter::DEPLOYED_BYTECODE,
+        "pending must see a contract deployed inside a flashblock"
+    );
+
+    // `count1` is slot 0. It initialises to 1 and the same flashblock increments it once.
+    let pending_slot0 = provider.get_storage_at(counter, U256::ZERO).pending().await?;
+    assert_eq!(pending_slot0, U256::from(2), "pending must see storage written by a flashblock");
+
+    // The block never sealed, so canonical must still see nothing.
+    assert!(
+        provider.get_code_at(counter).await?.is_empty(),
+        "the overlay must not leak into the canonical tag"
+    );
+    assert_eq!(provider.get_storage_at(counter, U256::ZERO).await?, U256::ZERO);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_get_proof_refuses_pending() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    setup.send_test_payloads().await?;
+
+    // The overlay carries no trie data, so a proof over it would splice the parent trie's branch
+    // hashes around a leaf holding pending values and hash to no block. Refusing is the contract.
+    let err = provider
+        .get_proof(setup.txn_details.counter_address, vec![])
+        .pending()
+        .await
+        .expect_err("eth_getProof must refuse the pending tag");
+    assert!(err.to_string().contains("state root"), "the refusal should say why, got: {err}");
+
+    // The same request against a real block still works.
+    let proof = provider.get_proof(setup.txn_details.counter_address, vec![]).await?;
+    assert_eq!(proof.address, setup.txn_details.counter_address);
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_get_logs_pending() -> Result<()> {
     let harness = FlashblocksHarness::new().await?;

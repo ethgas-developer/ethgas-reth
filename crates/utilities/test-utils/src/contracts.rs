@@ -41,3 +41,12 @@ sol!(
         "/../../test_utils/contracts/out/Minimal7702Account.sol/Minimal7702Account.json"
     )
 );
+
+sol!(
+    #[sol(rpc)]
+    PendingProbe,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test_utils/contracts/out/PendingProbe.sol/PendingProbe.json"
+    )
+);

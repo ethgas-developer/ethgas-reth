@@ -16,6 +16,7 @@ reth-cli-util.workspace = true
 
 # misc
 clap.workspace = true
+humantime.workspace = true
 url.workspace = true
 
 [features]

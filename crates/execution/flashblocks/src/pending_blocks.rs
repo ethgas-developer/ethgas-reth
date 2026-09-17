@@ -279,9 +279,18 @@ impl PendingBlocks {
         self.transactions.iter().filter(move |tx| tx.block_number.unwrap_or(0) == block_number)
     }
 
-    /// Returns all withdrawals collected from flashblocks.
+    /// Returns the withdrawals for the latest pending block.
+    ///
+    /// `self.flashblocks` spans every pending block number, and `diff.withdrawals` is cumulative
+    /// within a block, so the answer is the latest block's last flashblock alone.
     fn get_withdrawals(&self) -> Vec<Withdrawal> {
-        self.flashblocks.iter().flat_map(|fb| fb.diff.withdrawals.clone()).collect()
+        let block_number = self.latest_header.number;
+        self.flashblocks
+            .iter()
+            .rev()
+            .find(|fb| fb.metadata.block_number == block_number)
+            .map(|fb| fb.diff.withdrawals.clone())
+            .unwrap_or_default()
     }
 
     /// Returns the latest block, optionally with full transaction details.
@@ -535,7 +544,7 @@ mod tests {
     use alloy_primitives::{
         Address, B256, Bloom, Bytes, Log as PrimitiveLog, LogData, Signature, TxKind, U256,
     };
-    use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt};
+    use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt, Withdrawal};
     use alloy_rpc_types_engine::PayloadId;
 
     use super::{PendingBlocks, PendingBlocksBuilder};
@@ -642,6 +651,49 @@ mod tests {
             builder.with_receipt(hash, receipt_with_topics(hash, addr, vec![topic]));
         }
         builder.build().expect("build should succeed")
+    }
+
+    fn flashblock_with_withdrawals(
+        block_number: u64,
+        index: u64,
+        withdrawals: Vec<Withdrawal>,
+    ) -> FlashBlock {
+        let mut flashblock = test_flashblock();
+        flashblock.index = index;
+        flashblock.metadata.block_number = block_number;
+        flashblock.diff.withdrawals = withdrawals;
+        flashblock
+    }
+
+    fn withdrawal(index: u64) -> Withdrawal {
+        Withdrawal {
+            index,
+            validator_index: index,
+            address: Address::with_last_byte(index as u8),
+            amount: 1_000 + index,
+        }
+    }
+
+    /// Withdrawals must come from the latest block's last flashblock alone.
+    #[test]
+    fn get_withdrawals_returns_only_the_latest_blocks_set() {
+        let block_1 = vec![withdrawal(0), withdrawal(1)];
+        let block_2 = vec![withdrawal(2), withdrawal(3), withdrawal(4)];
+
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([
+            flashblock_with_withdrawals(1, 0, block_1.clone()),
+            flashblock_with_withdrawals(1, 1, block_1),
+            flashblock_with_withdrawals(2, 0, block_2.clone()),
+            flashblock_with_withdrawals(2, 1, block_2.clone()),
+        ]);
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: 2, ..Default::default() },
+            B256::ZERO,
+        ));
+        let pending = builder.build().expect("build should succeed");
+
+        assert_eq!(pending.get_withdrawals(), block_2);
     }
 
     #[test]

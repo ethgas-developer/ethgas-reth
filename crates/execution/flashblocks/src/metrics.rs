@@ -31,6 +31,10 @@ pub struct Metrics {
     #[metric(describe = "Number of Flashblocks that arrive in an unexpected order")]
     pub unexpected_block_order: Counter,
 
+    /// Number of flashblocks dropped because their block is already canonical.
+    #[metric(describe = "Number of flashblocks dropped because their block is already canonical")]
+    pub flashblock_superseded: Counter,
+
     /// Number of flashblocks contained within a single block.
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,
@@ -45,9 +49,17 @@ pub struct Metrics {
     )]
     pub pending_clear_catchup: Counter,
 
-    /// Number of times pending snapshot was cleared because of reorg.
-    #[metric(describe = "Number of times pending snapshot was cleared because of reorg")]
+    /// Number of times pending was rebuilt after canonical diverged.
+    #[metric(describe = "Number of times pending was rebuilt after canonical diverged")]
     pub pending_clear_reorg: Counter,
+
+    /// Number of times pending was rebuilt after canonical extended it.
+    #[metric(describe = "Number of times pending was rebuilt after canonical extended it")]
+    pub pending_rebase_canonical_extended: Counter,
+
+    /// Number of times pending was rebuilt having tracked no transactions.
+    #[metric(describe = "Number of times pending was rebuilt having tracked no transactions")]
+    pub pending_rebase_untracked: Counter,
 
     /// Pending snapshot flashblock index (current).
     #[metric(describe = "Pending snapshot flashblock index (current)")]

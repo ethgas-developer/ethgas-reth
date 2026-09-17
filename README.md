@@ -31,6 +31,7 @@ RUST_LOG=info,ethgas_reth_flashblocks=debug \
     --full \
     --flashblocks-url ws://localhost:1111 \
     --max-pending-blocks-depth 3 \
+    --flashblocks.ping-interval 30s \
     --engine.persistence-threshold 0 \
     --engine.memory-block-buffer-target 0 \
     --authrpc.addr 0.0.0.0 \
@@ -45,6 +46,7 @@ RUST_LOG=info,ethgas_reth_flashblocks=debug \
 |---|---|---|
 | `--flashblocks-url <URL>` | WebSocket endpoint streaming flashblock updates (alias `--websocket-url`). Enables flashblocks when set. | _disabled_ |
 | `--max-pending-blocks-depth <N>` | Max pending blocks to retain in memory. | `3` |
+| `--flashblocks.ping-interval <DURATION>` | Interval between upstream websocket ping frames, and also the pong deadline: a reconnect is triggered once a ping goes unanswered for one interval, so a dead upstream is detected after at most two. Accepts humantime durations (`500ms`, `5s`, `1m`). Requires `--flashblocks-url`. | `30s` |
 
 When `--flashblocks-url` is set, requests with the `pending` block tag are
 served from flashblock-derived state, and the following extra subscriptions are

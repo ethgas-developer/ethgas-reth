@@ -1,6 +1,12 @@
 //! Flashblocks state processor.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use alloy_consensus::{
     Header, TxEnvelope, TxReceipt,
@@ -32,11 +38,12 @@ use crate::{
     block_assembler::BlockAssembler,
     cache::FlashblockCache,
     error::{ProviderError, StateProcessorError},
+    metrics::Metrics,
     payload::FlashBlock,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
-        ReorgDetector, SequenceValidationResult,
+        ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
     },
 };
 
@@ -59,6 +66,8 @@ pub struct StateProcessor<Client> {
     chain_spec: Arc<ChainSpec>,
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
+    last_canonical_block: Arc<AtomicU64>,
+    metrics: Metrics,
 }
 
 impl<Client> StateProcessor<Client>
@@ -77,6 +86,7 @@ where
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         chain_spec: Arc<ChainSpec>,
         sender: Sender<Arc<PendingBlocks>>,
+        last_canonical_block: Arc<AtomicU64>,
     ) -> Self {
         let cache = client
             .best_block_number()
@@ -90,6 +100,8 @@ where
             chain_spec,
             sender,
             cache: Arc::new(Mutex::new(cache)),
+            last_canonical_block,
+            metrics: Metrics::default(),
         }
     }
 
@@ -139,11 +151,31 @@ where
         }
     }
 
+    /// Whether the flashblock's block is already canonical.
+    ///
+    /// The queue carries canonical blocks and flashblocks together and is drained FIFO, so a
+    /// flashblock that was current when it arrived can be stale by the time it is applied.
+    /// Applying one anyway fails sequence validation and clears the healthy snapshot built for a
+    /// later block.
+    fn is_superseded(&self, flashblock: &FlashBlock) -> bool {
+        flashblock.metadata.block_number <= self.last_canonical_block.load(Ordering::Relaxed)
+    }
+
     async fn apply_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: FlashBlock,
     ) {
+        if self.is_superseded(&flashblock) {
+            debug!(
+                message = "skipping flashblock for an already canonical block",
+                block_number = flashblock.metadata.block_number,
+                flashblock_index = flashblock.index,
+            );
+            self.metrics.flashblock_superseded.increment(1);
+            return;
+        }
+
         match self.process_flashblock(prev_pending_blocks, &flashblock) {
             Ok(new_pending_blocks) => {
                 if let Some(ref pb) = new_pending_blocks {
@@ -215,7 +247,8 @@ where
             block.body().transactions().map(|tx| *tx.tx_hash()).collect();
 
         let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
-        let reorg_detected = reorg_result.is_reorg();
+        // Anything short of an exact match must rebuild from canonical.
+        let requires_rebuild = reorg_result.requires_rebuild();
 
         // Determine the reconciliation strategy
         let strategy = CanonicalBlockReconciler::reconcile(
@@ -223,7 +256,7 @@ where
             Some(pending_blocks.latest_block_number()),
             block.number,
             self.max_depth,
-            reorg_detected,
+            requires_rebuild,
         );
 
         match strategy {
@@ -233,17 +266,43 @@ where
                     latest_pending_block = pending_blocks.latest_block_number(),
                     canonical_block = block.number,
                 );
+                self.metrics.pending_clear_catchup.increment(1);
                 Ok(None)
             }
             ReconciliationStrategy::HandleReorg => {
-                warn!(
-                    message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
-                    tracked_txn_hashes = ?tracked_txn_hashes,
-                    block_txn_hashes = ?block_txn_hashes,
-                );
+                match reorg_result {
+                    ReorgDetectionResult::CanonicalExtendsTracked {
+                        tracked_count,
+                        canonical_count,
+                    } => {
+                        self.metrics.pending_rebase_canonical_extended.increment(1);
+                        debug!(
+                            message = "canonical extended the tracked transactions, rebasing pending onto it",
+                            canonical_block = block.number,
+                            tracked_count,
+                            canonical_count,
+                        );
+                    }
+                    ReorgDetectionResult::Untracked { canonical_count } => {
+                        self.metrics.pending_rebase_untracked.increment(1);
+                        debug!(
+                            message = "no transactions tracked for the canonical block, rebasing pending onto it",
+                            canonical_block = block.number,
+                            canonical_count,
+                        );
+                    }
+                    _ => {
+                        self.metrics.pending_clear_reorg.increment(1);
+                        warn!(
+                            message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
+                            tracked_txn_hashes = ?tracked_txn_hashes,
+                            block_txn_hashes = ?block_txn_hashes,
+                        );
+                    }
+                }
 
-                // If there is a reorg, we re-process all future flashblocks without reusing the
-                // existing pending state
+                // The previous bundle is dropped, not reused: its post-values for this block
+                // would shadow the canonical state being rebased onto.
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
                 self.build_pending_state(None, &flashblocks)
             }
@@ -432,6 +491,11 @@ where
                 slot_number: None,
             };
 
+            // A cache miss falls through to the provider, which only knows canonical blocks, so
+            // a pending parent is unresolvable without this. Separate from the EIP-2935 ring
+            // buffer written below; both are needed.
+            db.block_hashes.insert(base.block_number - 1, base.parent_hash);
+
             let evm_env = evm_config
                 .next_evm_env(&last_block_header, &block_env_attributes)
                 .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
@@ -439,7 +503,10 @@ where
 
             // Apply EIP-4788 (beacon root) and EIP-2935 (blockhashes) pre-execution
             // system calls so cached execution matches what the validator computes.
-            let parent_hash = last_block_header.hash_slow();
+            // From the second iteration on, `last_block_header` is the header this loop assembled
+            // a moment ago, whose hash matches no real block. The wire value is authoritative, and
+            // is what the assembled header declares as its own parent.
+            let parent_hash = base.parent_hash;
             let mut system_caller = SystemCaller::new(self.chain_spec.clone());
             system_caller
                 .apply_blockhashes_contract_call(parent_hash, &mut evm)
@@ -570,7 +637,10 @@ where
                         let existing_override = state_overrides.entry(*addr).or_default();
                         existing_override.balance = Some(acc.info.balance);
                         existing_override.nonce = Some(acc.info.nonce);
-                        existing_override.code = acc.info.code.clone().map(|code| code.bytes());
+                        // `bytes()` returns revm's analysed bytecode, which is jump-table padded.
+                        // The override must carry the original deployed code.
+                        existing_override.code =
+                            acc.info.code.clone().map(|code| code.original_bytes());
 
                         let existing =
                             existing_override.state_diff.get_or_insert_with(Default::default);

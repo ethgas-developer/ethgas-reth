@@ -39,7 +39,10 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::sleep,
 };
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use tokio_stream::{
+    StreamExt,
+    wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
+};
 
 use ethgas_reth_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
@@ -151,10 +154,16 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
                 let mut canonical_stream =
                     BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
                 tokio::spawn(async move {
-                    while let Some(Ok(notification)) = canonical_stream.next().await {
-                        let committed = notification.committed();
-                        for block in committed.blocks_iter() {
-                            state_for_canonical.on_canonical_block_received(block);
+                    while let Some(result) = canonical_stream.next().await {
+                        match result {
+                            Ok(notification) => {
+                                let committed = notification.committed();
+                                for block in committed.blocks_iter() {
+                                    state_for_canonical.on_canonical_block_received(block);
+                                }
+                            }
+                            // Mirrors the production site in extension.rs.
+                            Err(BroadcastStreamRecvError::Lagged(_)) => {}
                         }
                     }
                 });

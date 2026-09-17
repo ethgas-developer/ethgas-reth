@@ -2,11 +2,11 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::Header;
+use alloy_consensus::{Eip658Value, Header, TxReceipt};
 use alloy_eips::{BlockNumberOrTag, eip4895::Withdrawal};
 use alloy_network::Ethereum;
 use alloy_primitives::{
-    Address, B256, BlockNumber, Sealed, TxHash, U256,
+    Address, B256, BlockNumber, Bloom, Sealed, TxHash, U256,
     map::foldhash::{HashMap, HashMapExt},
 };
 use alloy_provider::network::{TransactionResponse, primitives::BlockTransactions};
@@ -25,11 +25,9 @@ use crate::{
     traits::PendingBlocksAPI,
 };
 
-/// A full transaction object with its associated logs and gas usage.
+/// A transaction with its logs and the receipt fields flashblock execution already knows.
 ///
-/// This is returned by `newFlashblockTransactions` subscription when `full = true`
-/// or when a log filter is provided, giving both the transaction details, logs emitted
-/// by its execution, and gas accounting fields.
+/// Every field is serialized exactly as `eth_getTransactionReceipt` serializes it.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithLogs {
@@ -38,8 +36,19 @@ pub struct TransactionWithLogs {
     pub transaction: Transaction,
     /// Logs emitted by this transaction.
     pub logs: Vec<Log>,
-    /// Gas consumed by this transaction's execution.
-    pub gas_used: Option<u64>,
+    /// Gas this transaction alone consumed.
+    #[serde(with = "alloy_serde::quantity")]
+    pub gas_used: u64,
+    /// Whether execution succeeded.
+    #[serde(flatten)]
+    pub status: Eip658Value,
+    /// Gas used by the block up to and including this transaction.
+    #[serde(with = "alloy_serde::quantity")]
+    pub cumulative_gas_used: u64,
+    /// Set only when this transaction deployed a contract.
+    pub contract_address: Option<Address>,
+    /// Bloom filter over `logs`.
+    pub logs_bloom: Bloom,
 }
 
 /// Builder for [`PendingBlocks`].
@@ -204,6 +213,21 @@ pub struct PendingBlocks {
 }
 
 impl PendingBlocks {
+    fn transaction_with_logs(
+        transaction: &Transaction,
+        receipt: &TransactionReceipt,
+    ) -> TransactionWithLogs {
+        TransactionWithLogs {
+            transaction: transaction.clone(),
+            logs: receipt.inner.logs().to_vec(),
+            gas_used: receipt.gas_used,
+            status: receipt.inner.status_or_post_state(),
+            cumulative_gas_used: receipt.inner.cumulative_gas_used(),
+            contract_address: receipt.contract_address,
+            logs_bloom: *receipt.inner.logs_bloom(),
+        }
+    }
+
     /// Returns the latest block number in the pending state.
     #[inline]
     pub fn latest_block_number(&self) -> BlockNumber {
@@ -378,14 +402,9 @@ impl PendingBlocks {
         self.transactions
             .iter()
             .skip(prev_count)
-            .map(|tx| {
-                let tx_hash = tx.tx_hash();
-                let (logs, gas_used) = self
-                    .transaction_receipts
-                    .get(&tx_hash)
-                    .map(|receipt| (receipt.inner.logs().to_vec(), Some(receipt.gas_used)))
-                    .unwrap_or_default();
-                TransactionWithLogs { transaction: tx.clone(), logs, gas_used }
+            .filter_map(|tx| {
+                let receipt = self.transaction_receipts.get(&tx.tx_hash())?;
+                Some(Self::transaction_with_logs(tx, receipt))
             })
             .collect()
     }
@@ -444,11 +463,7 @@ impl PendingBlocks {
             .skip(prev_count)
             .filter_map(|tx| {
                 let receipt = self.transaction_receipts.get(&tx.tx_hash())?;
-                Some(TransactionWithLogs {
-                    transaction: tx.clone(),
-                    logs: receipt.inner.logs().to_vec(),
-                    gas_used: Some(receipt.gas_used),
-                })
+                Some(Self::transaction_with_logs(tx, receipt))
             })
             .collect()
     }
@@ -468,20 +483,14 @@ impl PendingBlocks {
             .iter()
             .skip(prev_count)
             .filter_map(|tx| {
-                let tx_hash = tx.tx_hash();
-                let receipt = self.transaction_receipts.get(&tx_hash)?;
-                let logs = receipt.inner.logs();
+                let receipt = self.transaction_receipts.get(&tx.tx_hash())?;
 
-                let has_match = logs.iter().any(|log| filter.matches(&log.inner));
+                let has_match = receipt.inner.logs().iter().any(|log| filter.matches(&log.inner));
                 if !has_match {
                     return None;
                 }
 
-                Some(TransactionWithLogs {
-                    transaction: tx.clone(),
-                    logs: logs.to_vec(),
-                    gas_used: Some(receipt.gas_used),
-                })
+                Some(Self::transaction_with_logs(tx, receipt))
             })
             .collect()
     }
@@ -752,7 +761,7 @@ mod tests {
         let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
 
         assert_eq!(txs.len(), 1);
-        assert_eq!(txs[0].gas_used, Some(21_000));
+        assert_eq!(txs[0].gas_used, 21_000);
     }
 
     #[test]
@@ -764,7 +773,7 @@ mod tests {
         let txs = pending.get_pending_transactions_with_logs();
 
         assert_eq!(txs.len(), 2);
-        assert_eq!(txs[0].gas_used, Some(21_000));
+        assert_eq!(txs[0].gas_used, 21_000);
         assert_eq!(txs[0].logs.len(), 1);
         assert_eq!(txs[1].logs[0].address(), ab);
     }

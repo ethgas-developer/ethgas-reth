@@ -473,7 +473,7 @@ where
                     acc
                 });
 
-            let assembled = BlockAssembler::assemble(&flashblocks)?;
+            let assembled = BlockAssembler::assemble(self.chain_spec.as_ref(), &flashblocks)?;
             let block = assembled.block;
             let header = assembled.header;
 

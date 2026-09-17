@@ -93,12 +93,49 @@ impl FlashblocksState {
         });
     }
 
+    /// Drops the published snapshot when it is anchored more than `max_pending_blocks_depth`
+    /// blocks behind `canonical_block_number`.
+    ///
+    /// [`StateProcessor`] enforces the same bound, but only once it reaches the matching queue
+    /// entry. Repeating it on the receiving task is what bounds staleness by chain progress
+    /// rather than by processor progress.
+    fn drop_pending_behind(&self, canonical_block_number: u64) {
+        let published = self.pending_blocks.load();
+        let Some(stale) = published.as_ref() else { return };
+
+        // Measured from the earliest pending block, matching the bound the processor and the
+        // reconciler apply, so the three cannot disagree about which snapshots survive.
+        let earliest_pending_block = stale.earliest_block_number();
+        if canonical_block_number.saturating_sub(earliest_pending_block) <=
+            self.max_pending_blocks_depth
+        {
+            return;
+        }
+
+        // Clear only the snapshot that was judged. The processor publishes concurrently, and
+        // anything published after the load above is anchored on a later tip than this one.
+        // Losing that race costs nothing, because an absent snapshot is always safe to serve.
+        let current = self.pending_blocks.compare_and_swap(&published, None);
+        if !current.as_ref().is_some_and(|current| Arc::ptr_eq(current, stale)) {
+            return;
+        }
+
+        debug!(
+            message = "dropping pending snapshot anchored too far behind the canonical tip",
+            canonical_block_number,
+            earliest_pending_block,
+            max_depth = self.max_pending_blocks_depth,
+        );
+        self.metrics.pending_drop_stale.increment(1);
+    }
+
     /// Handles a canonical block being received.
     pub fn on_canonical_block_received(&self, block: &RecoveredBlock<Block>) {
         let block_number = block.number;
         // `store`, not `fetch_max`: a reorg moves the tip down, and holding the higher height
         // would suppress every flashblock built on the replacement chain.
         self.last_canonical_block.store(block_number, Ordering::Relaxed);
+        self.drop_pending_behind(block_number);
         match self.queue.send(StateUpdate::Canonical(block.clone())) {
             Ok(_) => {
                 info!(message = "added canonical block to processing queue", block_number)

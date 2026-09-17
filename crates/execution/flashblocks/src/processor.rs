@@ -6,6 +6,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::{
@@ -115,6 +116,7 @@ where
                     debug!(message = "processing canonical block", block_number = block.number);
                     match self.process_canonical_block(prev_pending_blocks, &block) {
                         Ok(new_pending_blocks) => {
+                            self.record_pending_snapshot(new_pending_blocks.as_deref());
                             self.pending_blocks.swap(new_pending_blocks);
 
                             let mut cache = self.cache.lock().await;
@@ -151,6 +153,15 @@ where
         }
     }
 
+    /// Publishes the pending snapshot gauges; zero means no snapshot.
+    fn record_pending_snapshot(&self, pending: Option<&PendingBlocks>) {
+        let (height, index) =
+            pending.map_or((0, 0), |pb| (pb.latest_block_number(), pb.latest_flashblock_index()));
+
+        self.metrics.pending_snapshot_height.set(height as f64);
+        self.metrics.pending_snapshot_fb_index.set(index as f64);
+    }
+
     /// Whether the flashblock's block is already canonical.
     ///
     /// The queue carries canonical blocks and flashblocks together and is drained FIFO, so a
@@ -176,11 +187,16 @@ where
             return;
         }
 
-        match self.process_flashblock(prev_pending_blocks, &flashblock) {
+        let started = Instant::now();
+        let result = self.process_flashblock(prev_pending_blocks, &flashblock);
+        self.metrics.block_processing_duration.record(started.elapsed().as_secs_f64());
+
+        match result {
             Ok(new_pending_blocks) => {
                 if let Some(ref pb) = new_pending_blocks {
                     _ = self.sender.send(Arc::clone(pb));
                 }
+                self.record_pending_snapshot(new_pending_blocks.as_deref());
                 self.pending_blocks.swap(new_pending_blocks);
             }
             Err(e) => {
@@ -217,6 +233,7 @@ where
                     e,
                     StateProcessorError::Provider(ProviderError::MissingCanonicalHeader { .. })
                 ) {
+                    self.metrics.block_processing_error.increment(1);
                     error!(message = "could not process Flashblock", error = %e);
                 }
             }
@@ -361,11 +378,21 @@ where
             flashblock.index,
         );
 
+        let first_of_next_block =
+            matches!(validation_result, SequenceValidationResult::FirstOfNextBlock);
+
         match validation_result {
             SequenceValidationResult::NextInSequence |
             SequenceValidationResult::FirstOfNextBlock => {
                 // We have received the next flashblock for the current block
                 // or the first flashblock for the next block
+                if first_of_next_block {
+                    // Indices are contiguous, so the last one is the count minus one.
+                    self.metrics
+                        .flashblocks_in_block
+                        .record(pending_blocks.latest_flashblock_index() as f64 + 1.0);
+                }
+
                 let mut flashblocks = pending_blocks.get_flashblocks();
                 flashblocks.push(flashblock.clone());
                 self.build_pending_state(prev_pending_blocks, &flashblocks)
@@ -383,6 +410,7 @@ where
             SequenceValidationResult::InvalidNewBlockIndex { block_number, index: _ } => {
                 // We have received a non-zero flashblock for a new block
 
+                self.metrics.unexpected_block_order.increment(1);
                 error!(
                     message = "Received non-zero index Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
                     curr_block = %pending_blocks.latest_block_number(),
@@ -393,6 +421,7 @@ where
             SequenceValidationResult::NonSequentialGap { expected: _, actual: _ } => {
                 // We have received a non-sequential Flashblock for the current block
 
+                self.metrics.unexpected_block_order.increment(1);
                 error!(
                     message = "Received non-sequential Flashblock for current block, zeroing Flashblocks until we receive a base Flashblock",
                     curr_block = %pending_blocks.latest_block_number(),
@@ -448,6 +477,8 @@ where
             prev_pending_blocks.as_ref().map_or_else(StateOverride::default, |pending_blocks| {
                 pending_blocks.get_state_overrides().unwrap_or_default()
             });
+
+        let mut sender_recovery = Duration::ZERO;
 
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
@@ -524,7 +555,12 @@ where
                     .and_then(|p| p.get_transaction_sender(transaction.tx_hash()))
                 {
                     Some(cached) => cached,
-                    None => transaction.recover_signer()?,
+                    None => {
+                        let started = Instant::now();
+                        let sender = transaction.recover_signer()?;
+                        sender_recovery += started.elapsed();
+                        sender
+                    }
                 };
                 pending_blocks_builder.increment_nonce(sender);
                 pending_blocks_builder.with_transaction_sender(*transaction.tx_hash(), sender);
@@ -664,6 +700,8 @@ where
             db = evm.into_db();
             last_block_header = block.header.clone();
         }
+
+        self.metrics.sender_recovery_duration.record(sender_recovery.as_secs_f64());
 
         // Extract the accumulated bundle state.
         db.merge_transitions(BundleRetention::Reverts);

@@ -2,12 +2,24 @@
 //! node.
 
 use eyre::Result;
-use reth_node_builder::{EngineNodeLauncher, Node, NodeHandle, NodeHandleFor, TreeConfig};
-use reth_node_ethereum::EthereumNode;
+use reth_node_builder::{EngineNodeLauncher, Node, NodeHandle, TreeConfig};
+use reth_node_ethereum::{
+    EthereumNode,
+    node::{EthereumAddOns, EthereumEngineValidatorBuilder},
+};
 use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
-use crate::{EthgasNodeExtension, FromExtensionConfig, NodeHooks, types::EthgasNodeBuilder};
+use reth_node_builder::rpc::{
+    BasicEngineApiBuilder, BasicEngineValidatorBuilder, Identity, RpcAddOns,
+};
+
+use crate::{
+    EthgasNodeExtension, FromExtensionConfig, NodeHooks,
+    builder::EthNodeAdapter,
+    eth_api::EthgasEthApiBuilder,
+    types::{EthAddOns, EthgasNodeBuilder},
+};
 
 /// Wraps the Ethgas node configuration and orchestrates builder wiring.
 #[derive(Debug)]
@@ -40,7 +52,7 @@ impl EthgasNodeRunner {
     async fn launch_node(
         extensions: Vec<Box<dyn EthgasNodeExtension>>,
         builder: EthgasNodeBuilder,
-    ) -> Result<NodeHandleFor<EthereumNode>> {
+    ) -> Result<NodeHandle<EthNodeAdapter, EthAddOns>> {
         info!(target: "ethgas-runner", "starting custom Ethgas node");
 
         let ethgas_node = EthereumNode::default();
@@ -48,7 +60,14 @@ impl EthgasNodeRunner {
         let builder = builder
             .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
             .with_components(ethgas_node.components_builder())
-            .with_add_ons(ethgas_node.add_ons())
+            .with_add_ons(EthereumAddOns::new(RpcAddOns::new(
+                EthgasEthApiBuilder,
+                EthereumEngineValidatorBuilder::default(),
+                BasicEngineApiBuilder::default(),
+                BasicEngineValidatorBuilder::default(),
+                Default::default(),
+                Identity::new(),
+            )))
             .on_component_initialized(move |_ctx| Ok(()));
 
         extensions

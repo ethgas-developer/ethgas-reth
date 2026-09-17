@@ -14,10 +14,8 @@ test-utils = [
     "dep:alloy-signer",
     "dep:alloy-signer-local",
     "dep:jsonrpsee",
-    "dep:reth-ethereum-primitives",
-    "dep:reth-ipc",
+        "dep:reth-ipc",
     "dep:reth-node-core",
-    "dep:reth-primitives-traits",
     "dep:reth-rpc-api",
     "dep:reth-rpc-layer",
     "dep:tracing-subscriber",
@@ -39,13 +37,16 @@ reth-rpc-eth-api.workspace = true
 reth-node-api.workspace = true
 reth-chainspec.workspace = true
 reth-provider.workspace = true
+reth-revm.workspace = true
+reth-chain-state.workspace = true
 reth-node-ethereum.workspace = true
 reth-exex.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
-reth-ethereum-primitives = { workspace = true, optional = true }
+reth-ethereum-primitives.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true, optional = true }
+reth-primitives-traits.workspace = true
+reth-trie-common.workspace = true
 reth-rpc-api = { workspace = true, optional = true }
 reth-rpc-layer = { workspace = true, optional = true }
 reth-tasks = { workspace = true }

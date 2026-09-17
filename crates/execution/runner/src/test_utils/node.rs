@@ -25,8 +25,11 @@ use reth_node_ethereum::{
 use reth_provider::providers::BlockchainProvider;
 
 use crate::{
-    EthgasNodeExtension, NodeHooks, eth_api::EthgasEthApiBuilder, test_utils::engine::EngineApi,
+    
+    EthgasNodeExtension, NodeHooks, eth_api::EthgasEthApiBuilder, PendingStateSource, eth_api::EthgasEthApiBuilder,
+    test_utils::engine::EngineApi,
     types::EthProvider,
+,
 };
 
 /// Convenience alias for the local blockchain provider type.
@@ -65,6 +68,7 @@ impl LocalNode {
     pub async fn new(
         extensions: Vec<Box<dyn EthgasNodeExtension>>,
         chain_spec: Arc<ChainSpec>,
+        pending_state: Option<Arc<dyn PendingStateSource>>,
     ) -> Result<Self> {
         let exec = reth_tasks::Runtime::test();
 
@@ -103,7 +107,7 @@ impl LocalNode {
             .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
             .with_components(eth_node.components_builder())
             .with_add_ons(EthereumAddOns::new(RpcAddOns::new(
-                EthgasEthApiBuilder,
+                EthgasEthApiBuilder::new(pending_state),
                 EthereumEngineValidatorBuilder::default(),
                 BasicEngineApiBuilder::default(),
                 BasicEngineValidatorBuilder::default(),

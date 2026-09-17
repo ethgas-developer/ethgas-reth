@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use alloy_consensus::{Header, Sealable};
+use alloy_consensus::Header;
 use alloy_eips::{eip6110::DEPOSIT_REQUEST_TYPE, eip7685::Requests};
 use alloy_primitives::{B256, Bytes, Sealed};
 use alloy_rpc_types::Withdrawal;
@@ -113,7 +113,7 @@ impl BlockAssembler {
         block.header.parent_beacon_block_root = Some(base.parent_beacon_block_root);
         block.header.requests_hash = Self::requests_hash(spec, &block, flashblocks)?;
 
-        let sealed_header = block.header.clone().seal_slow();
+        let sealed_header = block.header.clone().seal(B256::ZERO);
 
         Ok(AssembledBlock { block, header: sealed_header })
     }

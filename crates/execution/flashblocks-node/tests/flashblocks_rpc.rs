@@ -742,6 +742,40 @@ async fn test_get_logs_pending() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_pending_block_and_transaction_report_no_block_hash() -> Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+    let provider = harness.provider();
+
+    harness
+        .send_flashblock(logs_payload(vec![make_log(LOG_EMITTER_A, vec![TEST_LOG_TOPIC_0])]))
+        .await?;
+
+    let pending_block = provider
+        .get_block_by_number(BlockNumberOrTag::Pending)
+        .await?
+        .expect("pending block expected");
+    assert_eq!(pending_block.hash(), B256::ZERO);
+
+    let tx = provider
+        .get_transaction_by_hash(TRANSFER_ETH_HASH)
+        .await?
+        .expect("pending transaction expected");
+    assert_eq!(tx.block_hash(), None);
+    
+    let receipt = provider
+        .get_transaction_receipt(TRANSFER_ETH_HASH)
+        .await?
+        .expect("pending receipt expected");
+    assert_eq!(receipt.block_hash, Some(B256::ZERO));
+
+    let logs = provider.get_logs(&Filter::default().select(BlockNumberOrTag::Pending)).await?;
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].block_hash, Some(B256::ZERO));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_get_logs_filter_by_address() -> Result<()> {
     let harness = FlashblocksHarness::new().await?;
     let provider = harness.provider();

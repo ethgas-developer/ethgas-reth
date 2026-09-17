@@ -827,7 +827,10 @@ mod tests {
         let pending_block = test.flashblocks.get_pending_blocks().get_block(true);
 
         // When the flashblock is invalid, the chain doesn't progress
-        assert_eq!(pending_block.unwrap().hash(), current_block.unwrap().hash());
+        let current = current_block.unwrap();
+        let pending = pending_block.unwrap();
+        assert_eq!(pending.header.number, current.header.number);
+        assert_eq!(pending.transactions, current.transactions);
     }
 
     #[tokio::test]

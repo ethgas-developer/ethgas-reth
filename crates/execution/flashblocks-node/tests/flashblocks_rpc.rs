@@ -634,15 +634,20 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> Result<()> {
     let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
     assert_eq!(notif["params"]["subscription"], subscription_id);
 
-    // Our `TransactionWithLogs` flattens the transaction and adds `logs` + `gas_used`.
     let tx = &notif["params"]["result"];
     assert!(tx.is_object(), "expected a full transaction object, got: {tx:?}");
     assert!(tx["hash"].is_string(), "expected flattened tx hash");
     assert!(tx["blockNumber"].is_string(), "expected flattened tx blockNumber");
     assert!(tx["logs"].is_array(), "expected logs array");
-    // `TransactionWithLogs` is camelCase, so `gas_used` serializes as `gasUsed`. Emitted entries
-    // always carry a known receipt, so it is populated.
-    assert!(tx["gasUsed"].is_number(), "expected gasUsed to be populated");
+    let gas_used = tx["gasUsed"].as_str().expect("gasUsed should be a hex quantity string");
+    assert!(gas_used.starts_with("0x"), "gasUsed should be a hex quantity, got: {gas_used}");
+    assert_eq!(tx["status"], "0x1", "expected a receipt-shaped status");
+    assert!(tx["cumulativeGasUsed"].as_str().is_some_and(|v| v.starts_with("0x")));
+    // An absent key reads as null, so check the key rather than the value.
+    let contract_address =
+        tx.get("contractAddress").expect("contractAddress should be present on the wire");
+    assert!(contract_address.is_null() || contract_address.is_string());
+    assert!(tx["logsBloom"].is_string());
 
     // Second flashblock delta: 5 transactions -> 5 separate full-tx messages.
     setup.send_flashblock(setup.create_second_payload()).await?;
@@ -653,6 +658,13 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> Result<()> {
         let tx = &notif["params"]["result"];
         assert!(tx["hash"].is_string() && tx["blockNumber"].is_string());
         assert!(tx["logs"].is_array());
+
+        let gas_used = tx["gasUsed"].as_str().expect("gasUsed should be a hex quantity string");
+        assert!(gas_used.starts_with("0x"), "gasUsed should be a hex quantity, got: {gas_used}");
+        assert_eq!(tx["status"], "0x1");
+        assert!(tx["cumulativeGasUsed"].as_str().is_some_and(|v| v.starts_with("0x")));
+        assert!(tx.get("contractAddress").is_some());
+        assert!(tx["logsBloom"].is_string());
     }
 
     Ok(())
@@ -761,7 +773,7 @@ async fn test_pending_block_and_transaction_report_no_block_hash() -> Result<()>
         .await?
         .expect("pending transaction expected");
     assert_eq!(tx.block_hash(), None);
-    
+
     let receipt = provider
         .get_transaction_receipt(TRANSFER_ETH_HASH)
         .await?

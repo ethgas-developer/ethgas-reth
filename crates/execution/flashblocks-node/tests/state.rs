@@ -283,6 +283,13 @@ mod tests {
                 .canonical_in_memory_state()
                 .update_chain(NewCanonicalChain::Commit { new: vec![executed] });
 
+            // `update_chain` only fills the in-memory block map. The canonical head lives in the
+            // chain info tracker, which is what `best_block_number()` reports, so set it too or
+            // every tip read stays at genesis.
+            self.provider
+                .canonical_in_memory_state()
+                .set_canonical_head(block.clone_sealed_header());
+
             // NOTE: this method intentionally does NOT notify the StateProcessor
             // (`on_canonical_block_received`). It only commits the block to the underlying chain so
             // tests can reproduce the race where `latest` advanced but pending state is not yet
@@ -1297,5 +1304,115 @@ mod tests {
 
         assert_eq!(stored, parent_hash);
         assert_ne!(stored, B256::ZERO, "a zero hash would mean BLOCKHASH missed");
+    }
+
+    /// Advances the node without telling the state processor, reproducing the queue-lag shape:
+    /// the chain moves on while the processor is still draining old entries.
+    async fn advance_tip_without_processing(test: &mut TestHarness, blocks: u64) {
+        for _ in 0..blocks {
+            test.new_canonical_block_without_processing(vec![]).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stale_pending_dropped_once_node_advances_past_it() {
+        reth_tracing::init_test_tracing();
+        let mut test = TestHarness::new();
+
+        let anchor_parent = test.current_canonical_block().number;
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+        let anchored = test.flashblocks.get_pending_blocks().get_block(true);
+        assert!(anchored.is_some(), "the base flashblock should publish a snapshot");
+
+        advance_tip_without_processing(&mut test, 5).await;
+
+        // Pinned to the old parent, so this is a genuinely backlogged flashblock continuing the
+        // block pending already tracks, not a new one. It must not keep the stranded overlay live.
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1).with_canonical_block_number(anchor_parent).build(),
+        )
+        .await;
+
+        assert!(
+            test.flashblocks.get_pending_blocks().is_none(),
+            "a snapshot anchored more than max_depth behind the tip must not stay readable"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stale_notification_rebases_onto_the_real_tip() {
+        reth_tracing::init_test_tracing();
+        let mut test = TestHarness::new();
+
+        let genesis = test.current_canonical_block().number;
+        for parent in genesis..genesis + 3 {
+            test.send_flashblock(
+                FlashblockBuilder::new_base(&test).with_canonical_block_number(parent).build(),
+            )
+            .await;
+        }
+        // Block genesis+1 lands canonically carrying a transaction pending never tracked, which
+        // is what forces a rebuild. The node then moves on without the processor hearing about it.
+        let txn = test.build_transaction_to_send_eth(User::Alice, User::Bob, 100);
+        let stale_notification = test.new_canonical_block_without_processing(vec![txn]).await;
+        advance_tip_without_processing(&mut test, 1).await;
+        let tip = test.current_canonical_block().number;
+        assert_eq!(stale_notification.number, tip - 1);
+
+        // The rebuild must drop every flashblock the node has already canonicalized, not just
+        // those up to the notified block, or pending re-executes an already canonical range.
+        test.flashblocks.on_canonical_block_received(&stale_notification);
+        sleep(Duration::from_millis(SLEEP_TIME)).await;
+
+        assert_eq!(
+            test.flashblocks.get_pending_blocks().get_canonical_block_number(),
+            BlockNumberOrTag::Number(tip),
+            "pending must rebase onto the real tip, not onto the notified block"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_canonical_notification_drops_snapshot_left_behind() {
+        reth_tracing::init_test_tracing();
+        let mut test = TestHarness::new();
+
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+        assert!(test.flashblocks.get_pending_blocks().is_some());
+
+        advance_tip_without_processing(&mut test, 5).await;
+
+        // The receiving task drops the stranded snapshot itself, so staleness is bounded by
+        // chain progress rather than by how long the processor takes to reach the queue entry.
+        let block = test.current_canonical_block();
+        test.flashblocks.on_canonical_block_received(&block);
+
+        assert!(test.flashblocks.get_pending_blocks().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_pending_recovers_at_current_canonical_tip() {
+        reth_tracing::init_test_tracing();
+        let mut test = TestHarness::new();
+
+        let anchor_parent = test.current_canonical_block().number;
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+        advance_tip_without_processing(&mut test, 5).await;
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1).with_canonical_block_number(anchor_parent).build(),
+        )
+        .await;
+        assert!(test.flashblocks.get_pending_blocks().is_none());
+
+        // Recovery needs no mechanism of its own: the next flashblock rooted at the tip rebuilds
+        // from an absent snapshot through the existing path.
+        let tip = test.current_canonical_block().number;
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+        let recovered = test
+            .flashblocks
+            .get_pending_blocks()
+            .get_block(true)
+            .expect("a tip-rooted flashblock must rebuild pending");
+        assert_eq!(recovered.header.number, tip + 1);
     }
 }

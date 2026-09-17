@@ -109,13 +109,14 @@ where
     /// Processes updates from the queue until the channel closes.
     pub async fn start(&self) {
         while let Some(update) = self.rx.lock().await.recv().await {
-            let prev_pending_blocks = self.pending_blocks.load_full();
+            let prev_pending_blocks = self.load_pending_or_drop_stale();
 
             match update {
                 StateUpdate::Canonical(block) => {
                     debug!(message = "processing canonical block", block_number = block.number);
                     match self.process_canonical_block(prev_pending_blocks, &block) {
                         Ok(new_pending_blocks) => {
+                            let new_pending_blocks = self.publishable(new_pending_blocks);
                             self.record_pending_snapshot(new_pending_blocks.as_deref());
                             self.pending_blocks.swap(new_pending_blocks);
 
@@ -131,7 +132,7 @@ where
                                     cached_count = cached.len(),
                                 );
                                 for flashblock in cached {
-                                    let fb_prev = self.pending_blocks.load_full();
+                                    let fb_prev = self.load_pending_or_drop_stale();
                                     self.apply_flashblock(fb_prev, flashblock).await;
                                 }
                             }
@@ -162,14 +163,107 @@ where
         self.metrics.pending_snapshot_fb_index.set(index as f64);
     }
 
+    /// `None` means unknown, and every caller then leaves pending state alone rather than
+    /// dropping a snapshot that may well be current. This is the only place that decides that.
+    fn canonical_tip(&self) -> Option<BlockNumber> {
+        match self.client.best_block_number() {
+            Ok(best) => Some(best),
+            Err(e) => {
+                warn!(message = "could not read canonical tip, leaving pending state alone", error = %e);
+                None
+            }
+        }
+    }
+
+    /// Neither height alone is the chain's: the queue is FIFO so a queued entry can trail the
+    /// node, and the canonical stream survives lag by skipping notifications so the last one seen
+    /// can trail it too. The greater of the two keeps every guard anchored to the real chain.
+    fn effective_canonical_number(&self, notified: BlockNumber) -> BlockNumber {
+        self.canonical_tip().map_or(notified, |best| notified.max(best))
+    }
+
     /// Whether the flashblock's block is already canonical.
     ///
-    /// The queue carries canonical blocks and flashblocks together and is drained FIFO, so a
-    /// flashblock that was current when it arrived can be stale by the time it is applied.
-    /// Applying one anyway fails sequence validation and clears the healthy snapshot built for a
-    /// later block.
+    /// Applying a superseded flashblock fails sequence validation and clears the healthy
+    /// snapshot built for a later block.
     fn is_superseded(&self, flashblock: &FlashBlock) -> bool {
-        flashblock.metadata.block_number <= self.last_canonical_block.load(Ordering::Relaxed)
+        let canonical =
+            self.effective_canonical_number(self.last_canonical_block.load(Ordering::Relaxed));
+        flashblock.metadata.block_number <= canonical
+    }
+
+    /// Measured from the earliest pending block, which is the bound
+    /// [`CanonicalBlockReconciler`] applies, so the two cannot disagree about which snapshots
+    /// survive. The anchor is the block below that, so it may sit `max_depth + 1` behind `best`.
+    fn is_anchored_near(&self, pending_blocks: &PendingBlocks, best: BlockNumber) -> bool {
+        best.saturating_sub(pending_blocks.earliest_block_number()) <= self.max_depth
+    }
+
+    /// Usable means anchored near the tip and still extending past it. Heights only: detecting
+    /// that the anchor itself was reorged out means comparing hashes against canonical history,
+    /// which belongs in payload validation, not in a staleness check on published state.
+    fn extends_canonical_tip(&self, pending_blocks: &PendingBlocks) -> bool {
+        let Some(best) = self.canonical_tip() else { return true };
+
+        if !self.is_anchored_near(pending_blocks, best) {
+            debug!(
+                message = "pending snapshot anchored too far behind canonical tip, dropping",
+                canonical_tip = best,
+                earliest_pending_block = pending_blocks.earliest_block_number(),
+                max_depth = self.max_depth,
+            );
+            return false;
+        }
+
+        if pending_blocks.latest_block_number() <= best {
+            debug!(
+                message = "pending snapshot no longer extends canonical tip, dropping",
+                canonical_tip = best,
+                latest_pending_block = pending_blocks.latest_block_number(),
+            );
+            return false;
+        }
+
+        true
+    }
+
+    /// Every build path funnels through here, so this is the one place that enforces the
+    /// invariant: pending state either tracks flashblocks on the node's current canonical tip, or
+    /// it is absent. Recovery is then automatic — the next tip-rooted flashblock rebuilds.
+    fn publishable(&self, new: Option<Arc<PendingBlocks>>) -> Option<Arc<PendingBlocks>> {
+        let candidate = new?;
+        if self.extends_canonical_tip(&candidate) {
+            return Some(candidate);
+        }
+        self.metrics.pending_drop_stale.increment(1);
+        None
+    }
+
+    /// Drops the published snapshot first when it is stranded too far behind the tip.
+    ///
+    /// [`FlashblocksState`] drops stranded snapshots as notifications arrive; this covers the
+    /// advances that path did not report. A snapshot that merely stopped extending the tip is
+    /// left for [`Self::process_canonical_block`], so its catch-up path keeps reporting.
+    fn load_pending_or_drop_stale(&self) -> Option<Arc<PendingBlocks>> {
+        let pending_blocks = self.pending_blocks.load_full()?;
+
+        let Some(best) = self.canonical_tip() else { return Some(pending_blocks) };
+        if self.is_anchored_near(&pending_blocks, best) {
+            return Some(pending_blocks);
+        }
+
+        debug!(
+            message = "pending snapshot anchored too far behind canonical tip, dropping",
+            canonical_tip = best,
+            earliest_pending_block = pending_blocks.earliest_block_number(),
+            latest_pending_block = pending_blocks.latest_block_number(),
+            max_depth = self.max_depth,
+        );
+        self.metrics.pending_drop_stale.increment(1);
+        self.record_pending_snapshot(None);
+        self.pending_blocks.store(None);
+
+        None
     }
 
     async fn apply_flashblock(
@@ -193,6 +287,7 @@ where
 
         match result {
             Ok(new_pending_blocks) => {
+                let new_pending_blocks = self.publishable(new_pending_blocks);
                 if let Some(ref pb) = new_pending_blocks {
                     _ = self.sender.send(Arc::clone(pb));
                 }
@@ -267,11 +362,14 @@ where
         // Anything short of an exact match must rebuild from canonical.
         let requires_rebuild = reorg_result.requires_rebuild();
 
-        // Determine the reconciliation strategy
+        // Reorg detection compares against the block we were notified about, but reconciliation
+        // must use the node's real canonical height, or a lagging queue hides that pending has
+        // drifted away from the tip.
+        let canonical_number = self.effective_canonical_number(block.number);
         let strategy = CanonicalBlockReconciler::reconcile(
             Some(pending_blocks.earliest_block_number()),
             Some(pending_blocks.latest_block_number()),
-            block.number,
+            canonical_number,
             self.max_depth,
             requires_rebuild,
         );
@@ -319,8 +417,10 @@ where
                 }
 
                 // The previous bundle is dropped, not reused: its post-values for this block
-                // would shadow the canonical state being rebased onto.
-                flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
+                // would shadow the canonical state being rebased onto. Retain against the real
+                // tip, since re-executing an already canonical range cannot publish.
+                flashblocks
+                    .retain(|flashblock| flashblock.metadata.block_number > canonical_number);
                 self.build_pending_state(None, &flashblocks)
             }
             ReconciliationStrategy::DepthLimitExceeded { depth, max_depth } => {
@@ -330,7 +430,8 @@ where
                     max_depth = max_depth,
                 );
 
-                flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
+                flashblocks
+                    .retain(|flashblock| flashblock.metadata.block_number > canonical_number);
                 self.build_pending_state(None, &flashblocks)
             }
             ReconciliationStrategy::Continue => {

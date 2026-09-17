@@ -61,6 +61,12 @@ pub struct Metrics {
     #[metric(describe = "Number of times pending was rebuilt having tracked no transactions")]
     pub pending_rebase_untracked: Counter,
 
+    /// Number of times pending was dropped for drifting too far behind the canonical tip.
+    #[metric(
+        describe = "Number of times pending was dropped for drifting too far behind the canonical tip"
+    )]
+    pub pending_drop_stale: Counter,
+
     /// Pending snapshot flashblock index (current).
     #[metric(describe = "Pending snapshot flashblock index (current)")]
     pub pending_snapshot_fb_index: Gauge,

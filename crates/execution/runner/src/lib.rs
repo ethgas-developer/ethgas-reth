@@ -1,6 +1,8 @@
 //! Node assembly for the Ethgas node: the builder hooks, the extension trait that
 //! features plug into, and the runner that launches the configured node.
 
+pub mod eth_api;
+
 mod builder;
 pub use builder::{EthgasRpcContext, NodeHooks};
 

@@ -587,7 +587,7 @@ where
 
                 let rpc_txn = alloy_rpc_types::Transaction {
                     inner: envelope,
-                    block_hash: Some(header.hash()),
+                    block_hash: None,
                     block_number: Some(base.block_number),
                     transaction_index: Some(idx as u64),
                     effective_gas_price: Some(effective_gas_price),
@@ -599,7 +599,8 @@ where
                 let meta = TransactionMeta {
                     tx_hash: *transaction.tx_hash(),
                     index: idx as u64,
-                    block_hash: header.hash(),
+                    // No block hash exists for a flashblock.
+                    block_hash: B256::ZERO,
                     block_number: block.number,
                     base_fee: block.base_fee_per_gas,
                     excess_blob_gas: block.excess_blob_gas,

@@ -1,24 +1,29 @@
-FROM rust:1.95 AS build
-
+FROM lukemathwalker/cargo-chef:latest-rust-1.95-trixie AS chef
 WORKDIR /app
 
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
 RUN apt-get update && \
-    apt-get -y upgrade && \
-    apt-get install -y git libclang-dev pkg-config curl build-essential && \
+    apt-get install -y --no-install-recommends libclang-dev m4 pkg-config && \
     rm -rf /var/lib/apt/lists/*
 
-COPY ./ .
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
-RUN cargo build --release --bin ethgas-node
+COPY . .
+RUN cargo build --release --locked --bin ethgas-node
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04 AS runtime
 
 RUN apt-get update && \
-    apt-get install -y jq curl && \
+    apt-get install -y --no-install-recommends ca-certificates libssl3t64 && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+COPY --from=builder /app/target/release/ethgas-node /usr/local/bin/
 
-ENTRYPOINT [ "./ethgas-node" ]
+EXPOSE 8545 8546 8551 30303 30303/udp 9001
 
-COPY --from=build /app/target/release/ethgas-node ./
+ENTRYPOINT ["/usr/local/bin/ethgas-node"]

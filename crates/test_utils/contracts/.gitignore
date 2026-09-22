@@ -12,3 +12,6 @@ docs/
 
 # Dotenv file
 .env
+
+# Foundry dependencies (pinned in foundry.lock; restore with `forge install`)
+lib/

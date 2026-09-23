@@ -22,6 +22,24 @@ cargo build --release --bin ethgas-node
   --ws --ws.api eth,net,web3
 ```
 
+## Run with Docker
+
+Images are published to `ghcr.io/ethgas-developer/ethgas-reth`.
+
+```bash
+docker run -d --name ethgas-node \
+  -p 8545:8545 -p 8546:8546 -p 30303:30303 -p 30303:30303/udp \
+  -v ethgas-data:/data \
+  ghcr.io/ethgas-developer/ethgas-reth:latest node \
+  --chain hoodi \
+  --datadir /data \
+  --flashblocks-url wss://hoodi.flashblocks.ethgas.com/ws \
+  --engine.persistence-threshold 0 \
+  --engine.memory-block-buffer-target 0 \
+  --http --http.addr 0.0.0.0 --http.api eth,net,web3 \
+  --ws --ws.addr 0.0.0.0 --ws.api eth,net,web3
+```
+
 ## Flashblocks flags
 
 | Flag | Description | Default |
@@ -42,12 +60,3 @@ Point `--flashblocks-url` at the endpoint for the network you are running.
 > **These are node infrastructure, not application endpoints.** Your users should query your RPC.
 > Do not point an application at the stream directly, and do not expose it to them.
 
-**Serve WebSocket as well as HTTP.** The flashblock subscriptions need `--ws`. They cannot be
-served over HTTP.
-
-## The two engine flags
-
-`--engine.persistence-threshold 0` and `--engine.memory-block-buffer-target 0` are not cosmetic.
-They make the node persist blocks immediately rather than hold them in memory, which is what keeps
-pre-confirmed state anchored to the block it was built on. Running with the defaults risks
-`pending` silently falling back to the latest confirmed block.

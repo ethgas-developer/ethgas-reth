@@ -9,8 +9,11 @@ use ethgas_reth_flashblocks::{
     FlashblocksSubscriber,
 };
 use reth_provider::CanonStateSubscriptions;
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-use tracing::info;
+use tokio_stream::{
+    StreamExt,
+    wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
+};
+use tracing::{info, warn};
 
 /// Helper struct that wires the Flashblocks feature (canonical subscription and RPC) into the node
 /// builder.
@@ -36,7 +39,11 @@ impl EthgasNodeExtension for FlashblocksExtension {
         };
 
         let state = cfg.state;
-        let mut subscriber = FlashblocksSubscriber::new(Arc::clone(&state), cfg.websocket_url);
+        let mut subscriber = FlashblocksSubscriber::new(
+            Arc::clone(&state),
+            cfg.websocket_url,
+            cfg.subscriber_ping_interval,
+        );
 
         let state_for_canonical = Arc::clone(&state);
         let state_for_rpc = Arc::clone(&state);
@@ -51,10 +58,21 @@ impl EthgasNodeExtension for FlashblocksExtension {
             let mut canonical_stream =
                 BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
             tokio::spawn(async move {
-                while let Some(Ok(notification)) = canonical_stream.next().await {
-                    let committed = notification.committed();
-                    for block in committed.blocks_iter() {
-                        state_for_canonical.on_canonical_block_received(block);
+                while let Some(result) = canonical_stream.next().await {
+                    match result {
+                        Ok(notification) => {
+                            let committed = notification.committed();
+                            for block in committed.blocks_iter() {
+                                state_for_canonical.on_canonical_block_received(block);
+                            }
+                        }
+                        // Ending the stream here would freeze pending state at the current head.
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            warn!(
+                                message = "canonical state subscription lagged",
+                                skipped_notifications = skipped,
+                            );
+                        }
                     }
                 }
             });

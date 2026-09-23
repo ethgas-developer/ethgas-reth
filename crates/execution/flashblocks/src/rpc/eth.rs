@@ -24,7 +24,10 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::EthApiError;
 use tokio::{sync::broadcast::error::RecvError, time};
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use tokio_stream::{
+    StreamExt,
+    wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
+};
 use tracing::{debug, trace, warn};
 
 use crate::{
@@ -580,7 +583,20 @@ where
         let mut stream =
             BroadcastStream::new(self.eth_api.provider().subscribe_to_canonical_state());
 
-        while let Some(Ok(canon_state)) = stream.next().await {
+        while let Some(result) = stream.next().await {
+            let canon_state = match result {
+                Ok(canon_state) => canon_state,
+                // The receipt may have been in a skipped notification; the caller still times out.
+                Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                    warn!(
+                        message = "canonical state subscription lagged while awaiting receipt",
+                        tx_hash = %tx_hash,
+                        skipped_notifications = skipped,
+                    );
+                    continue;
+                }
+            };
+
             for (block_receipt, _) in canon_state.block_receipts() {
                 for (canonical_tx_hash, _) in &block_receipt.tx_receipts {
                     if *canonical_tx_hash == tx_hash {

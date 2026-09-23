@@ -9,6 +9,7 @@ use alloy_primitives::{Bytes, Sealed};
 use alloy_rpc_types::Withdrawal;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use reth_ethereum_primitives::Block;
+use tracing::warn;
 
 use crate::{
     error::{ExecutionError, ProtocolError, Result},
@@ -61,8 +62,17 @@ impl BlockAssembler {
             .flat_map(|flashblock| flashblock.diff.transactions.clone())
             .collect();
 
-        let withdrawals: Vec<Withdrawal> =
-            flashblocks.iter().flat_map(|flashblock| flashblock.diff.withdrawals.clone()).collect();
+        // Cumulative, not an increment: the producer resends the whole list on every flashblock.
+        let withdrawals: Vec<Withdrawal> = latest_flashblock.diff.withdrawals.clone();
+        if flashblocks.iter().any(|flashblock| {
+            !flashblock.diff.withdrawals.is_empty() && flashblock.diff.withdrawals != withdrawals
+        }) {
+            warn!(
+                message =
+                    "flashblock withdrawals are not cumulative; assembler assumption violated",
+                block_number = base.block_number,
+            );
+        }
 
         let execution_payload = ExecutionPayloadV3 {
             blob_gas_used: latest_flashblock.diff.blob_gas_used,
@@ -177,6 +187,30 @@ mod tests {
             result,
             Err(crate::error::StateProcessorError::Protocol(ProtocolError::EmptyFlashblocks))
         ));
+    }
+
+    #[test]
+    fn test_withdrawals_are_cumulative_not_concatenated() {
+        let withdrawals = vec![
+            Withdrawal { index: 0, validator_index: 1, address: Address::ZERO, amount: 100 },
+            Withdrawal { index: 1, validator_index: 2, address: Address::ZERO, amount: 200 },
+        ];
+
+        let mut flashblocks = vec![
+            create_test_flashblock(0, true),
+            create_test_flashblock(1, false),
+            create_test_flashblock(2, false),
+        ];
+        for flashblock in &mut flashblocks {
+            flashblock.diff.withdrawals = withdrawals.clone();
+        }
+
+        let assembled = BlockAssembler::assemble(&flashblocks).unwrap();
+        let assembled_withdrawals =
+            assembled.block.body.withdrawals.as_ref().expect("withdrawals present");
+
+        assert_eq!(assembled_withdrawals.len(), withdrawals.len());
+        assert_eq!(assembled_withdrawals.as_ref(), withdrawals.as_slice());
     }
 
     #[test]

@@ -30,7 +30,7 @@ pub struct Args {
     #[arg(
         long = "flashblocks.ping-interval",
         value_name = "FLASHBLOCKS_PING_INTERVAL",
-        default_value = "30s",
+        default_value = "2s",
         value_parser = humantime::parse_duration,
         requires = "flashblocks_url"
     )]
@@ -65,10 +65,10 @@ mod tests {
     }
 
     #[test]
-    fn ping_interval_defaults_to_30_seconds() {
+    fn ping_interval_defaults_to_2_seconds() {
         let args = parse(&["ethgas-node", "--flashblocks-url", "wss://example.com/ws"]);
 
-        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
+        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(2));
     }
 
     /// `requires` must not fire for a value that came from `default_value`, or the node would
@@ -80,7 +80,7 @@ mod tests {
             .args;
 
         assert_eq!(args.flashblocks_url, None);
-        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
+        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(2));
     }
 
     #[test]

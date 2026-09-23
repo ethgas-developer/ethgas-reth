@@ -10,4 +10,6 @@ mod genesis;
 pub use genesis::{DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_test_genesis};
 
 mod contracts;
-pub use contracts::{DoubleCounter, Minimal7702Account, MockERC20, TransparentUpgradeableProxy};
+pub use contracts::{
+    DoubleCounter, Minimal7702Account, MockERC20, PendingProbe, TransparentUpgradeableProxy,
+};

@@ -6,11 +6,13 @@ mod tests {
     use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag, Encodable2718};
     use alloy_genesis::Genesis;
     use alloy_primitives::{
-        Address, B256, BlockNumber, Bytes, TxHash, U256, address, b256, bytes,
+        Address, B256, BlockNumber, Bytes, TxHash, TxKind, U256, address, b256, bytes,
         map::foldhash::HashMap,
     };
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
+    use alloy_sol_types::SolCall;
+    use ethgas_node_runner::test_utils::PendingProbe;
     use ethgas_reth_flashblocks::{
         FlashblocksAPI, FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
         payload::{
@@ -159,6 +161,43 @@ mod tests {
                 .value(amount)
                 .gas_limit(21_000)
                 .max_fee_per_gas(2_000_000_000) // 2 gwei
+                .into_eip1559()
+        }
+
+        fn build_deployment_transaction(
+            &self,
+            from: User,
+            bytecode: Bytes,
+            nonce: u64,
+        ) -> TransactionSigned {
+            let mut builder = TransactionBuilder::default()
+                .signer(self.signer(from))
+                .chain_id(self.provider.chain_spec().chain_id())
+                .nonce(nonce)
+                .value(0)
+                .gas_limit(1_000_000)
+                .max_fee_per_gas(2_000_000_000)
+                .input(bytecode);
+            builder.to = TxKind::Create;
+            builder.into_eip1559()
+        }
+
+        fn build_contract_call(
+            &self,
+            from: User,
+            to: Address,
+            calldata: Bytes,
+            nonce: u64,
+        ) -> TransactionSigned {
+            TransactionBuilder::default()
+                .signer(self.signer(from))
+                .chain_id(self.provider.chain_spec().chain_id())
+                .to(to)
+                .nonce(nonce)
+                .value(0)
+                .gas_limit(1_000_000)
+                .max_fee_per_gas(2_000_000_000)
+                .input(calldata)
                 .into_eip1559()
         }
 
@@ -1162,5 +1201,98 @@ mod tests {
             test.flashblocks.get_pending_blocks().is_none(),
             "flashblock too far ahead should not be cached or produce pending state"
         );
+    }
+
+    /// Regression for `5721773`: the pending override must carry the deployed code, not revm's
+    /// jump-table-padded analysis of it.
+    #[tokio::test]
+    async fn pending_override_carries_original_bytecode() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+        let deployer = User::Bob;
+        let nonce = test.account_state(deployer).nonce;
+        let probe = test.address(deployer).create(nonce);
+        let deployment =
+            test.build_deployment_transaction(deployer, PendingProbe::BYTECODE.clone(), nonce);
+
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1).with_transactions(vec![deployment]).build(),
+        )
+        .await;
+
+        let overrides = test
+            .flashblocks
+            .get_pending_blocks()
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        let code = overrides
+            .get(&probe)
+            .expect("deployed contract should be overridden")
+            .code
+            .clone()
+            .expect("deployment should override code");
+
+        assert_eq!(code, PendingProbe::DEPLOYED_BYTECODE.clone());
+    }
+
+    /// Regression for `117eae2`: `BLOCKHASH` of a parent that is itself pending resolves to the
+    /// parent hash the wire advertised. Needs a two-block window — the first pending block's
+    /// parent is canonical, so the provider can still answer it.
+    #[tokio::test]
+    async fn pending_execution_resolves_blockhash_of_pending_parent() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        let first_base = FlashblockBuilder::new_base(&test).build();
+        let first_block = first_base.metadata.block_number;
+        test.send_flashblock(first_base).await;
+
+        let second_base =
+            FlashblockBuilder::new_base(&test).with_canonical_block_number(first_block).build();
+        let parent_hash = second_base.base.as_ref().expect("index 0 carries a base").parent_hash;
+        test.send_flashblock(second_base).await;
+
+        let deployer = User::Bob;
+        let nonce = test.account_state(deployer).nonce;
+        let probe = test.address(deployer).create(nonce);
+        let deployment =
+            test.build_deployment_transaction(deployer, PendingProbe::BYTECODE.clone(), nonce);
+        let record = test.build_contract_call(
+            deployer,
+            probe,
+            PendingProbe::recordParentHashCall {}.abi_encode().into(),
+            nonce + 1,
+        );
+
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1)
+                .with_canonical_block_number(first_block)
+                .with_transactions(vec![deployment, record])
+                .build(),
+        )
+        .await;
+
+        let overrides = test
+            .flashblocks
+            .get_pending_blocks()
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        let stored = overrides
+            .get(&probe)
+            .expect("probe should be overridden")
+            .state_diff
+            .as_ref()
+            .expect("recordParentHash writes a slot")
+            .get(&B256::ZERO)
+            .copied()
+            .expect("parentHash occupies slot 0");
+
+        assert_eq!(stored, parent_hash);
+        assert_ne!(stored, B256::ZERO, "a zero hash would mean BLOCKHASH missed");
     }
 }

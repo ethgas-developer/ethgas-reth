@@ -1,0 +1,17 @@
+target/
+
+.git/
+.gitignore
+.gitmodules
+.github/
+
+crates/test_utils/contracts/lib/
+crates/test_utils/contracts/cache/
+crates/test_utils/contracts/out/
+
+docs/
+*.md
+
+Dockerfile
+.dockerignore
+justfile

@@ -24,7 +24,9 @@ mod tests {
     use reth_provider::{AccountReader, BlockNumReader, BlockReader};
     use reth_revm::database::StateProviderDatabase;
     use reth_transaction_pool::test_utils::TransactionBuilder;
-    use reth_trie_common::ComputedTrieData;
+    use reth_trie_common::{
+        ComputedTrieData, HashedPostState, KeccakKeyHasher, updates::TrieUpdates,
+    };
     use std::str::FromStr;
 
     use reth_ethereum_primitives::{Block as EthBlock, Receipt, TransactionSigned};
@@ -211,13 +213,17 @@ mod tests {
                 requests: vec![block_execution_output.requests.clone()],
             };
 
+            let hashed_state = HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+                block_execution_output.state.state(),
+            );
+
             // Commit the block's execution outcome to the database
             let provider_rw = self.factory.provider_rw().unwrap();
             provider_rw
                 .append_blocks_with_state(
                     vec![block.clone()],
                     &execution_outcome,
-                    Default::default(),
+                    hashed_state.clone().into_sorted(),
                 )
                 .unwrap();
             provider_rw.commit().unwrap();
@@ -229,7 +235,10 @@ mod tests {
             let executed = ExecutedBlock::new(
                 Arc::new(block.clone()),
                 Arc::new(block_execution_output),
-                ComputedTrieData::default(),
+                ComputedTrieData::new(
+                    Arc::new(hashed_state.into_sorted()),
+                    Arc::new(TrieUpdates::default().into_sorted()),
+                ),
             );
             self.provider
                 .canonical_in_memory_state()

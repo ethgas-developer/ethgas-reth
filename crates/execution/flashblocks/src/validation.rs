@@ -180,6 +180,11 @@ pub struct CanonicalBlockReconciler;
 impl CanonicalBlockReconciler {
     /// Returns the appropriate [`ReconciliationStrategy`] based on pending vs canonical state.
     ///
+    /// `canonical_block_number` must be the node's effective canonical height, not merely the
+    /// height of the block being reconciled. A caller that passes a queued notification height
+    /// evaluates every guard here in whatever frame of reference the queue has fallen behind to,
+    /// so neither `CatchUp` nor `DepthLimitExceeded` fires while pending drifts from the tip.
+    ///
     /// Priority: `NoPendingState` → `CatchUp` → `HandleReorg` → `DepthLimitExceeded` → `Continue`
     pub const fn reconcile(
         pending_earliest_block: Option<u64>,

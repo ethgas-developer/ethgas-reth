@@ -14,14 +14,33 @@ ethgas-cli-utils.workspace = true
 reth-ethereum-cli.workspace = true
 reth-cli-util.workspace = true
 
+# Only used to forward the `jemalloc` feature to rocksdb & keccak features.
+reth-provider.workspace = true
+alloy-primitives.workspace = true
+
 # misc
 clap.workspace = true
 humantime.workspace = true
 url.workspace = true
 
 [features]
-default = []
-jemalloc = ["reth-cli-util/jemalloc"]
+default = ["jemalloc", "asm-keccak", "keccak-cache-global"]
+
+jemalloc = [
+    "reth-cli-util/jemalloc",
+    "reth-ethereum-cli/jemalloc",
+    "reth-provider/jemalloc",
+]
+jemalloc-prof = [
+    "jemalloc",
+    "reth-cli-util/jemalloc-prof",
+    "reth-ethereum-cli/jemalloc-prof",
+]
+asm-keccak = [
+    "reth-ethereum-cli/asm-keccak",
+    "alloy-primitives/asm-keccak",
+]
+keccak-cache-global = ["alloy-primitives/keccak-cache-global"]
 
 [lints]
 workspace = true

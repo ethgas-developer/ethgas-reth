@@ -12,6 +12,14 @@ type NodeCli = Cli<EthereumChainSpecParser, cli::Args>;
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
 
+// Required for "override_allocator_on_supported_platforms".
+#[cfg(all(feature = "jemalloc", unix))]
+use reth_cli_util::allocator::tikv_jemalloc_sys as _;
+
+#[cfg(all(feature = "jemalloc-prof", unix))]
+#[unsafe(export_name = "malloc_conf")]
+static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+
 fn main() {
     ethgas_cli_utils::init_reth!();
 

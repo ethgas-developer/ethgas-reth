@@ -126,6 +126,7 @@ impl Erc20TestSetup {
                 block_number: 1,
                 receipts: HashMap::default(),
                 new_account_balances: HashMap::default(),
+                inclusion_fee: None,
             },
         }
     }
@@ -157,6 +158,7 @@ impl Erc20TestSetup {
                 block_number: 1,
                 receipts,
                 new_account_balances: HashMap::default(),
+                inclusion_fee: None,
             },
         }
     }
@@ -188,6 +190,7 @@ impl Erc20TestSetup {
                     prior_deploy_txs * 350_000,
                 ),
                 new_account_balances: HashMap::default(),
+                inclusion_fee: None,
             },
         }
     }

@@ -11,7 +11,7 @@ use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use tokio::sync::broadcast;
 
-use crate::{payload::FlashBlock, pending_blocks::PendingBlocks};
+use crate::{fee::ReceivedInclusionFee, payload::FlashBlock, pending_blocks::PendingBlocks};
 
 /// Trait for receiving flashblock updates.
 pub trait FlashblocksReceiver {
@@ -26,6 +26,9 @@ pub trait FlashblocksAPI {
 
     /// Subscribes to flashblock updates.
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>>;
+
+    /// `None` until a flashblock carries one, and again after one that carries none.
+    fn latest_inclusion_fee(&self) -> Option<Arc<ReceivedInclusionFee>>;
 }
 
 /// API for accessing pending blocks data.

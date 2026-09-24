@@ -45,9 +45,14 @@ use tokio_stream::{
 };
 
 use ethgas_reth_flashblocks::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
-    FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
-    payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata},
+    EthApiExt, EthApiOverrideServer, EthFeeOverrideServer, EthPubSub, EthPubSubApiServer,
+    EthgasApiExt, EthgasApiServer, FlashblocksAPI, FlashblocksReceiver, FlashblocksState,
+    PendingBlocksAPI,
+    config::DEFAULT_INCLUSION_FEE_MAX_AGE,
+    payload::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, InclusionFee,
+        Metadata,
+    },
 };
 
 // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
@@ -181,6 +186,14 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
                 Arc::clone(&fb),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+            let ethgas_api = EthgasApiExt::new(
+                ctx.registry.eth_api().clone(),
+                Arc::clone(&fb),
+                DEFAULT_INCLUSION_FEE_MAX_AGE,
+            );
+            ctx.modules.replace_configured(EthFeeOverrideServer::into_rpc(ethgas_api.clone()))?;
+            ctx.modules.merge_configured(EthgasApiServer::into_rpc(ethgas_api))?;
 
             // Register the flashblocks-aware eth_subscribe endpoint (mirrors the production
             // `FlashblocksExtension`); otherwise reth's default eth_subscribe rejects the
@@ -437,18 +450,14 @@ pub struct FlashblockBuilder<'a> {
     canonical_block_number: Option<BlockNumber>,
     /// The index of the flashblock.
     index: u64,
+    /// The builder's inclusion fee to carry in the metadata.
+    inclusion_fee: Option<InclusionFee>,
 }
 
 impl<'a> FlashblockBuilder<'a> {
     /// Create a new base flashblock builder (index 0).
     pub fn new_base(harness: &'a FlashblocksBuilderTestHarness) -> Self {
-        Self {
-            canonical_block_number: None,
-            transactions: Vec::new(),
-            receipts: HashMap::default(),
-            index: 0,
-            harness,
-        }
+        Self::new(harness, 0)
     }
 
     /// Create a new flashblock builder for a given index.
@@ -459,7 +468,14 @@ impl<'a> FlashblockBuilder<'a> {
             receipts: HashMap::default(),
             harness,
             index,
+            inclusion_fee: None,
         }
+    }
+
+    /// Carry the builder's inclusion fee in the flashblock metadata.
+    pub const fn with_inclusion_fee(&mut self, inclusion_fee: InclusionFee) -> &mut Self {
+        self.inclusion_fee = Some(inclusion_fee);
+        self
     }
 
     /// Set the receipts for the flashblock.
@@ -533,6 +549,7 @@ impl<'a> FlashblockBuilder<'a> {
                 block_number: canonical_block_num,
                 receipts: self.receipts.clone(),
                 new_account_balances: HashMap::default(),
+                inclusion_fee: self.inclusion_fee.clone(),
             },
         }
     }

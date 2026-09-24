@@ -1,8 +1,11 @@
 //! Flashblocks state management.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
 };
 
 use alloy_consensus::Header;
@@ -19,6 +22,7 @@ use tokio::sync::{
 use tracing::{debug, error, info};
 
 use crate::{
+    fee::ReceivedInclusionFee,
     metrics::Metrics,
     payload::FlashBlock,
     pending_blocks::PendingBlocks,
@@ -41,6 +45,7 @@ pub struct FlashblocksState {
     flashblock_sender: Sender<Arc<PendingBlocks>>,
     max_pending_blocks_depth: u64,
     last_canonical_block: Arc<AtomicU64>,
+    inclusion_fee: ArcSwapOption<ReceivedInclusionFee>,
     metrics: Metrics,
 }
 
@@ -61,6 +66,7 @@ impl FlashblocksState {
             flashblock_sender,
             max_pending_blocks_depth,
             last_canonical_block: Arc::new(AtomicU64::new(0)),
+            inclusion_fee: ArcSwapOption::new(None),
             metrics: Metrics::default(),
         }
     }
@@ -163,6 +169,19 @@ impl FlashblocksReceiver for FlashblocksState {
             return;
         }
 
+        let received = flashblock.metadata.inclusion_fee.clone().map(|inclusion_fee| {
+            Arc::new(ReceivedInclusionFee {
+                inclusion_fee,
+                block_number,
+                flashblock_index,
+                received_at: Instant::now(),
+            })
+        });
+        if received.is_some() {
+            self.metrics.inclusion_fee_received.increment(1);
+        }
+        self.inclusion_fee.store(received);
+
         match self.queue.send(StateUpdate::Flashblock(flashblock)) {
             Ok(_) => {
                 debug!(
@@ -184,6 +203,10 @@ impl FlashblocksAPI for FlashblocksState {
 
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>> {
         self.flashblock_sender.subscribe()
+    }
+
+    fn latest_inclusion_fee(&self) -> Option<Arc<ReceivedInclusionFee>> {
+        self.inclusion_fee.load_full()
     }
 }
 
@@ -207,8 +230,10 @@ impl FlashblocksState {
 mod tests {
     use reth_primitives_traits::Block as BlockT;
 
+    use alloy_primitives::U256;
+
     use super::*;
-    use crate::payload::Metadata;
+    use crate::payload::{InclusionFee, Metadata};
 
     fn canonical_block(number: u64) -> RecoveredBlock<Block> {
         let block =
@@ -221,6 +246,59 @@ mod tests {
             metadata: Metadata { block_number, ..Default::default() },
             ..Default::default()
         }
+    }
+
+    fn inclusion_fee(fee: u64) -> InclusionFee {
+        InclusionFee { priority_fee: U256::from(fee) }
+    }
+
+    fn flashblock_with_fee(block_number: u64, index: u64, fee: u64) -> FlashBlock {
+        FlashBlock {
+            index,
+            metadata: Metadata {
+                block_number,
+                inclusion_fee: Some(inclusion_fee(fee)),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_latest_flashblock_with_a_inclusion_fee_is_held() {
+        let state = FlashblocksState::new(3);
+        state.on_canonical_block_received(&canonical_block(10));
+
+        state.on_flashblock_received(flashblock_with_fee(11, 0, 5));
+        state.on_flashblock_received(flashblock_with_fee(11, 1, 7));
+
+        let held = state.latest_inclusion_fee().unwrap();
+        assert_eq!(held.inclusion_fee.priority_fee, U256::from(7));
+        assert_eq!(held.block_number, 11);
+        assert_eq!(held.flashblock_index, 1);
+    }
+
+    #[test]
+    fn a_flashblock_without_a_inclusion_fee_clears_the_held_one() {
+        let state = FlashblocksState::new(3);
+        state.on_canonical_block_received(&canonical_block(10));
+        state.on_flashblock_received(flashblock_with_fee(11, 0, 5));
+
+        state.on_flashblock_received(flashblock(11));
+
+        assert_eq!(state.latest_inclusion_fee(), None);
+    }
+
+    #[test]
+    fn a_superseded_flashblock_does_not_touch_the_held_inclusion_fee() {
+        let state = FlashblocksState::new(3);
+        state.on_canonical_block_received(&canonical_block(10));
+        state.on_flashblock_received(flashblock_with_fee(11, 0, 5));
+
+        state.on_flashblock_received(flashblock_with_fee(10, 3, 9));
+
+        let held = state.latest_inclusion_fee().unwrap();
+        assert_eq!(held.inclusion_fee.priority_fee, U256::from(5));
     }
 
     /// A flashblock whose block is already canonical must never reach the queue: applying one

@@ -24,7 +24,10 @@ use reth_node_ethereum::{
 };
 use reth_provider::providers::BlockchainProvider;
 
-use crate::{EthgasNodeExtension, NodeHooks, test_utils::engine::EngineApi, types::EthProvider};
+use crate::{
+    EthgasNodeExtension, NodeHooks, eth_api::EthgasEthApiBuilder, test_utils::engine::EngineApi,
+    types::EthProvider,
+};
 
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = EthProvider;
@@ -100,7 +103,7 @@ impl LocalNode {
             .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
             .with_components(eth_node.components_builder())
             .with_add_ons(EthereumAddOns::new(RpcAddOns::new(
-                crate::eth_api::EthgasEthApiBuilder,
+                EthgasEthApiBuilder,
                 EthereumEngineValidatorBuilder::default(),
                 BasicEngineApiBuilder::default(),
                 BasicEngineValidatorBuilder::default(),

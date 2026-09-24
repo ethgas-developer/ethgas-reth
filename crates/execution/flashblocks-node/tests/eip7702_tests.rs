@@ -128,7 +128,12 @@ fn create_base_flashblock(setup: &TestSetup) -> FlashBlock {
             transactions: vec![setup.account_deploy_tx.clone()],
             ..Default::default()
         },
-        metadata: Metadata { block_number: 1, receipts, new_account_balances: HashMap::default() },
+        metadata: Metadata {
+            block_number: 1,
+            receipts,
+            new_account_balances: HashMap::default(),
+            inclusion_fee: None,
+        },
     }
 }
 
@@ -149,7 +154,12 @@ fn delta_flashblock(index: u64, txs: Vec<(Bytes, TxHash, u64)>) -> FlashBlock {
             transactions,
             ..Default::default()
         },
-        metadata: Metadata { block_number: 1, receipts, new_account_balances: HashMap::default() },
+        metadata: Metadata {
+            block_number: 1,
+            receipts,
+            new_account_balances: HashMap::default(),
+            inclusion_fee: None,
+        },
     }
 }
 

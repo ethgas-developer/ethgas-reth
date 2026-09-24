@@ -1,14 +1,12 @@
 //! Flashblocks state management.
 
 use std::{
-    {
     fmt::Debug,
     sync::{
-            Arc, OnceLock,
-            atomic::{AtomicU64, Ordering},
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
     },
     time::Instant,
-    },
 };
 
 use alloy_consensus::Header;

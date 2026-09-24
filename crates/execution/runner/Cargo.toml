@@ -16,6 +16,7 @@ test-utils = [
     "dep:jsonrpsee",
     "dep:reth-ethereum-primitives",
     "dep:reth-ipc",
+    "dep:reth-network-p2p",
     "dep:reth-node-core",
     "dep:reth-primitives-traits",
     "dep:reth-rpc-api",
@@ -44,6 +45,7 @@ reth-exex.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-ethereum-primitives = { workspace = true, optional = true }
 reth-ipc = { workspace = true, optional = true }
+reth-network-p2p = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 reth-rpc-api = { workspace = true, optional = true }

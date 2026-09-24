@@ -1,8 +1,9 @@
 //! Flashblocks state management.
 
 use std::{
+    fmt::Debug,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Instant,
@@ -12,6 +13,7 @@ use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
 use reth_chainspec::{ChainSpec, ChainSpecProvider};
 use reth_ethereum_primitives::Block;
+use reth_network_p2p::sync::SyncStateProvider;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use tokio::sync::{
@@ -33,6 +35,11 @@ use crate::{
 // Buffer 4s of flashblocks for flashblock_sender
 const BUFFER_SIZE: usize = 20;
 
+/// A [`SyncStateProvider`] that also carries the `Debug` that [`FlashblocksState`] derives.
+trait SyncSource: SyncStateProvider + Debug {}
+
+impl<T: SyncStateProvider + Debug> SyncSource for T {}
+
 /// Manages the pending flashblock state and processes incoming updates.
 ///
 /// Unlike the old generic `FlashblocksState<Client>`, this version defers client binding
@@ -46,6 +53,7 @@ pub struct FlashblocksState {
     max_pending_blocks_depth: u64,
     last_canonical_block: Arc<AtomicU64>,
     inclusion_fee: ArcSwapOption<ReceivedInclusionFee>,
+    sync_state: OnceLock<Box<dyn SyncSource>>,
     metrics: Metrics,
 }
 
@@ -67,22 +75,30 @@ impl FlashblocksState {
             max_pending_blocks_depth,
             last_canonical_block: Arc::new(AtomicU64::new(0)),
             inclusion_fee: ArcSwapOption::new(None),
+            sync_state: OnceLock::new(),
             metrics: Metrics::default(),
         }
     }
 
-    /// Starts the flashblocks state processor with the given client.
+    /// Starts the flashblocks state processor with the given client and sync-state source.
     ///
     /// This spawns a background task that processes canonical blocks and flashblocks.
-    /// Should be called after the node is launched and the provider is available.
-    pub fn start<Client>(&self, client: Client)
-    where
+    /// Flashblocks that arrive while `sync_state` reports syncing are dropped before they reach
+    /// that task. Should be called once, after the node is launched and the provider is
+    /// available.
+    pub fn start<Client>(
+        &self,
+        client: Client,
+        sync_state: impl SyncStateProvider + Debug + 'static,
+    ) where
         Client: StateProviderFactory
             + ChainSpecProvider<ChainSpec = ChainSpec>
             + BlockReaderIdExt<Header = Header>
             + Clone
             + 'static,
     {
+        self.bind_sync_state(sync_state);
+
         let chain_spec = client.chain_spec();
         let state_processor = StateProcessor::new(
             client,
@@ -97,6 +113,14 @@ impl FlashblocksState {
         tokio::spawn(async move {
             state_processor.start().await;
         });
+    }
+
+    fn bind_sync_state(&self, sync_state: impl SyncSource + 'static) {
+        let _ = self.sync_state.set(Box::new(sync_state));
+    }
+
+    fn is_syncing(&self) -> bool {
+        self.sync_state.get().is_some_and(|sync_state| sync_state.is_syncing())
     }
 
     /// Drops the published snapshot when it is anchored more than `max_pending_blocks_depth`
@@ -157,6 +181,15 @@ impl FlashblocksReceiver for FlashblocksState {
     fn on_flashblock_received(&self, flashblock: FlashBlock) {
         let flashblock_index = flashblock.index;
         let block_number = flashblock.metadata.block_number;
+
+        if self.is_syncing() {
+            debug!(
+                message = "dropping flashblock while the node is syncing",
+                block_number, flashblock_index,
+            );
+            self.metrics.flashblock_dropped_syncing.increment(1);
+            return;
+        }
 
         // Keep superseded payloads out of the queue entirely. The processor repeats this check
         // for payloads that were fresh on arrival but went stale while queued.
@@ -228,12 +261,27 @@ impl FlashblocksState {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
     use reth_primitives_traits::Block as BlockT;
 
     use alloy_primitives::U256;
 
     use super::*;
     use crate::payload::{InclusionFee, Metadata};
+
+    #[derive(Debug, Default)]
+    struct SyncFlag(AtomicBool);
+
+    impl SyncStateProvider for SyncFlag {
+        fn is_syncing(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+
+        fn is_initially_syncing(&self) -> bool {
+            self.is_syncing()
+        }
+    }
 
     fn canonical_block(number: u64) -> RecoveredBlock<Block> {
         let block =
@@ -319,6 +367,32 @@ mod tests {
         assert!(matches!(queued[0], StateUpdate::Canonical(_)));
         match &queued[1] {
             StateUpdate::Flashblock(fb) => assert_eq!(fb.metadata.block_number, 11),
+            other => panic!("unexpected update queued: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn flashblocks_are_dropped_while_syncing() {
+        let state = FlashblocksState::new(3);
+        let sync_flag = Arc::new(SyncFlag::default());
+        state.bind_sync_state(Arc::clone(&sync_flag));
+
+        sync_flag.0.store(true, Ordering::Relaxed);
+        state.on_flashblock_received(flashblock(11));
+
+        sync_flag.0.store(false, Ordering::Relaxed);
+        state.on_flashblock_received(flashblock(12));
+
+        let mut rx = state.rx.lock().await;
+        let queued: Vec<StateUpdate> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+
+        assert_eq!(
+            queued.len(),
+            1,
+            "only the flashblock received after sync completed should queue"
+        );
+        match &queued[0] {
+            StateUpdate::Flashblock(fb) => assert_eq!(fb.metadata.block_number, 12),
             other => panic!("unexpected update queued: {other:?}"),
         }
     }

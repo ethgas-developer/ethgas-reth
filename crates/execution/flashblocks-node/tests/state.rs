@@ -22,6 +22,7 @@ mod tests {
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
     use reth_chainspec::{ChainSpec, EthChainSpec};
     use reth_db::{DatabaseEnv, test_utils::TempDatabase};
+    use reth_network_p2p::sync::NoopSyncStateUpdater;
     use reth_node_api::NodeTypesWithDBAdapter;
     use reth_provider::{AccountReader, BlockNumReader, BlockReader};
     use reth_revm::database::StateProviderDatabase;
@@ -334,7 +335,7 @@ mod tests {
                 .expect("able to recover block");
 
             let flashblocks = Arc::new(FlashblocksState::new(3));
-            flashblocks.start(provider.clone());
+            flashblocks.start(provider.clone(), NoopSyncStateUpdater::default());
 
             flashblocks.on_canonical_block_received(&block);
 

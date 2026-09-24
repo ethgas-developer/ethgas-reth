@@ -9,12 +9,13 @@ use reth_chainspec::ChainSpec;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
+use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState};
 use reth_node_builder::{
     Node, NodeBuilder, NodeConfig, NodeHandle,
     rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder, Identity, RpcAddOns},
 };
 use reth_node_core::{
-    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
+    args::{DatadirArgs, DebugArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
@@ -38,6 +39,7 @@ pub struct LocalNode {
     engine_ipc_path: String,
     pub(crate) ws_api_addr: SocketAddr,
     provider: LocalNodeProvider,
+    network: Arc<dyn NetworkSyncUpdater>,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
     _runtime: reth_tasks::Runtime,
@@ -88,9 +90,12 @@ impl LocalNode {
 
         let (db, db_path) = Self::create_test_database()?;
 
+        let debug_args = DebugArgs { startup_sync_state_idle: true, ..DebugArgs::default() };
+
         let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)
             .with_rpc(rpc_args)
+            .with_debug(debug_args)
             .with_unused_ports();
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
@@ -131,12 +136,14 @@ impl LocalNode {
 
         let engine_ipc_path = node_config.rpc.auth_ipc_path;
         let provider = node_handle.provider().clone();
+        let network = Arc::new(node_handle.network.clone());
 
         Ok(Self {
             http_api_addr,
             ws_api_addr,
             engine_ipc_path,
             provider,
+            network,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
             _runtime: exec,
@@ -167,6 +174,11 @@ impl LocalNode {
     /// Clone the underlying blockchain provider.
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.provider.clone()
+    }
+
+    /// Set the sync state the node reports through `eth_syncing`.
+    pub fn set_sync_state(&self, state: SyncState) {
+        self.network.update_sync_state(state);
     }
 
     /// Websocket URL for the local node.

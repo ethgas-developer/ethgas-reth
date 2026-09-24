@@ -35,6 +35,18 @@ pub struct Metrics {
     #[metric(describe = "Number of flashblocks dropped because their block is already canonical")]
     pub flashblock_superseded: Counter,
 
+    /// Number of flashblocks that carried a inclusion fee.
+    #[metric(describe = "Number of flashblocks that carried a inclusion fee")]
+    pub inclusion_fee_received: Counter,
+
+    /// Number of fee requests answered from the builder's inclusion fee.
+    #[metric(describe = "Number of fee requests answered from the builder's inclusion fee")]
+    pub rpc_inclusion_fee_builder: Counter,
+
+    /// Number of fee requests answered from the node's own oracle.
+    #[metric(describe = "Number of fee requests answered from the node's own oracle")]
+    pub rpc_inclusion_fee_fallback: Counter,
+
     /// Number of flashblocks contained within a single block.
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,

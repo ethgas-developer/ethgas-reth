@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use ethgas_node_runner::{EthgasNodeExtension, FromExtensionConfig, NodeHooks};
 use ethgas_reth_flashblocks::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
-    FlashblocksSubscriber,
+    EthApiExt, EthApiOverrideServer, EthFeeOverrideServer, EthPubSub, EthPubSubApiServer,
+    EthgasApiExt, EthgasApiServer, FlashblocksConfig, FlashblocksSubscriber,
 };
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::{
@@ -38,6 +38,7 @@ impl EthgasNodeExtension for FlashblocksExtension {
             return hooks;
         };
 
+        let inclusion_fee_max_age = cfg.inclusion_fee_max_age;
         let state = cfg.state;
         let mut subscriber = FlashblocksSubscriber::new(
             Arc::clone(&state),
@@ -90,6 +91,14 @@ impl EthgasNodeExtension for FlashblocksExtension {
                 Arc::clone(&state_for_rpc),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+            let ethgas_api = EthgasApiExt::new(
+                ctx.registry.eth_api().clone(),
+                Arc::clone(&state_for_rpc),
+                inclusion_fee_max_age,
+            );
+            ctx.modules.replace_configured(EthFeeOverrideServer::into_rpc(ethgas_api.clone()))?;
+            ctx.modules.merge_configured(EthgasApiServer::into_rpc(ethgas_api))?;
 
             // Register the flashblocks-aware `eth_subscribe` endpoint. Uses `replace_configured`
             // because `eth_subscribe` already exists from reth's standard module; standard

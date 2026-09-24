@@ -44,6 +44,15 @@ pub struct Metadata {
     /// Execution receipts for all transactions in the block.
     /// Contains logs, gas usage, and other EVM-level metadata.
     pub receipts: HashMap<B256, Receipt>,
+    /// Absent when the builder's price state is disabled or stale
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inclusion_fee: Option<InclusionFee>,
+}
+
+/// The builder's inclusion fee for the next flashblock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InclusionFee {
+    pub priority_fee: U256,
 }
 
 /// Represents the base configuration of an execution payload that remains constant

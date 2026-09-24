@@ -158,6 +158,7 @@ impl TestSetup {
                     receipts
                 },
                 new_account_balances: HashMap::default(),
+                inclusion_fee: None,
             },
         }
     }
@@ -220,6 +221,7 @@ impl TestSetup {
                     balances.insert(TEST_ADDRESS, U256::from(PENDING_BALANCE));
                     balances
                 },
+                inclusion_fee: None,
             },
         }
     }
@@ -717,7 +719,12 @@ fn logs_payload(logs: Vec<PrimitiveLog>) -> FlashBlock {
             transactions: vec![TRANSFER_ETH_TX],
             ..Default::default()
         },
-        metadata: Metadata { block_number: 1, receipts, new_account_balances: HashMap::default() },
+        metadata: Metadata {
+            block_number: 1,
+            receipts,
+            new_account_balances: HashMap::default(),
+            inclusion_fee: None,
+        },
     }
 }
 

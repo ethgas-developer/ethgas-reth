@@ -467,6 +467,7 @@ mod tests {
                     block_number: canonical_block_num,
                     receipts: self.receipts.clone(),
                     new_account_balances: HashMap::default(),
+                    inclusion_fee: None,
                 },
             }
         }

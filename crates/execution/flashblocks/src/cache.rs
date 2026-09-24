@@ -114,6 +114,7 @@ mod tests {
                 block_number,
                 new_account_balances: Default::default(),
                 receipts: Default::default(),
+                inclusion_fee: None,
             },
         }
     }

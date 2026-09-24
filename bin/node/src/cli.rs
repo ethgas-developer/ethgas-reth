@@ -35,6 +35,24 @@ pub struct Args {
         requires = "flashblocks_url"
     )]
     pub flashblocks_ping_interval: Duration,
+
+    /// How long the builder's inclusion fee is served after its flashblock arrived.
+    #[arg(
+        long = "flashblocks.fee-max-age",
+        value_name = "FLASHBLOCKS_FEE_MAX_AGE",
+        default_value = "15s",
+        value_parser = parse_positive_duration,
+        requires = "flashblocks_url"
+    )]
+    pub flashblocks_fee_max_age: Duration,
+}
+
+fn parse_positive_duration(value: &str) -> Result<Duration, String> {
+    let duration = humantime::parse_duration(value).map_err(|error| error.to_string())?;
+    if duration.is_zero() {
+        return Err("the duration must be positive".to_owned());
+    }
+    Ok(duration)
 }
 
 impl From<&Args> for Option<FlashblocksConfig> {
@@ -42,6 +60,7 @@ impl From<&Args> for Option<FlashblocksConfig> {
         args.flashblocks_url.clone().map(|url| {
             FlashblocksConfig::new(url, args.max_pending_blocks_depth)
                 .with_subscriber_ping_interval(args.flashblocks_ping_interval)
+                .with_inclusion_fee_max_age(args.flashblocks_fee_max_age)
         })
     }
 }

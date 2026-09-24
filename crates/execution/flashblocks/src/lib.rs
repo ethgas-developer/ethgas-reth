@@ -15,6 +15,9 @@ pub use error::{
     BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError,
 };
 
+pub mod fee;
+pub use fee::{FeeSource, InclusionPriorityFee, ReceivedInclusionFee};
+
 pub mod metrics;
 pub use metrics::Metrics;
 
@@ -45,6 +48,6 @@ pub use validation::{
 
 pub mod rpc;
 pub use rpc::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, ExtendedSubscriptionKind,
-    FlashblocksSubscriptionKind,
+    EthApiExt, EthApiOverrideServer, EthFeeOverrideServer, EthPubSub, EthPubSubApiServer,
+    EthgasApiExt, EthgasApiServer, ExtendedSubscriptionKind, FlashblocksSubscriptionKind,
 };

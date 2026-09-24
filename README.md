@@ -11,6 +11,12 @@ cargo build --release
 
 The binary is produced at `./target/release/ethgas-node`.
 
+```bash
+just maxperf
+```
+
+The binary is produced at `./target/maxperf/ethgas-node`.
+
 ## Run
 
 Minimal node (no flashblocks):

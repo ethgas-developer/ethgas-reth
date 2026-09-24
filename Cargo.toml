@@ -15,6 +15,39 @@ members = [
 
 default-members = ["bin/node"]
 
+# Build profiles
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "none"
+strip = "symbols"
+panic = "unwind"
+codegen-units = 16
+
+[profile.profiling]
+inherits = "release"
+debug = "full"
+strip = "none"
+
+[profile.bench]
+inherits = "profiling"
+
+[profile.maxperf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+[profile.maxperf-symbols]
+inherits = "maxperf"
+debug = "full"
+strip = "none"
+
+# CI profile: optimized for fast GHA builds and minimal disk usage
+[profile.ci]
+inherits = "dev"
+debug = false
+incremental = false
+
 [workspace.dependencies]
 # internal
 ethgas-reth-flashblocks = { path = "crates/execution/flashblocks" }

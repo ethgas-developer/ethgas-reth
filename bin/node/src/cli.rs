@@ -68,7 +68,6 @@ impl From<&Args> for Option<FlashblocksConfig> {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use ethgas_reth_flashblocks::config::DEFAULT_INCLUSION_FEE_MAX_AGE;
 
     use super::*;
 

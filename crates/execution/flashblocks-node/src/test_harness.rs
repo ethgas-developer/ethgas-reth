@@ -150,8 +150,9 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
         let hooks = hooks.add_node_started_hook(move |ctx| {
             let provider = ctx.provider().clone();
 
-            // Start the state processor with the provider
-            state_for_start.start(provider);
+            // Start the state processor with the provider and the node's sync state, as the
+            // production `FlashblocksExtension` does.
+            state_for_start.start(provider, ctx.network.clone());
 
             // If process_canonical is enabled, spawn a task to process canonical blocks
             if process_canonical {

@@ -54,6 +54,7 @@ reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
 reth-trie-common = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+reth-network-p2p = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
 
 # revm
 revm = { version = "43.0.2", default-features = false }

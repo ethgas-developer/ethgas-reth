@@ -11,6 +11,7 @@ use alloy_rpc_types_engine::PayloadAttributes;
 use eyre::{Result, eyre};
 use reth_chainspec::{ChainSpec, ChainSpecProvider};
 use reth_ethereum_primitives::Block;
+use reth_network_p2p::sync::SyncState;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use reth_provider::{BlockNumReader, BlockReader};
 use tokio::time::sleep;
@@ -107,6 +108,11 @@ impl TestHarness {
     /// Access the low-level blockchain provider.
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.node.blockchain_provider()
+    }
+
+    /// Set the sync state the node reports through `eth_syncing`.
+    pub fn set_sync_state(&self, state: SyncState) {
+        self.node.set_sync_state(state);
     }
 
     /// HTTP URL for sending JSON-RPC requests.

@@ -47,6 +47,10 @@ pub struct Metrics {
     #[metric(describe = "Number of fee requests answered from the node's own oracle")]
     pub rpc_inclusion_fee_fallback: Counter,
 
+    /// Number of flashblocks dropped because the node was syncing.
+    #[metric(describe = "Number of flashblocks dropped because the node was syncing")]
+    pub flashblock_dropped_syncing: Counter,
+
     /// Number of flashblocks contained within a single block.
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,

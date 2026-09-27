@@ -18,7 +18,7 @@ use tokio::time::sleep;
 use ethgas_test_utils::build_test_genesis;
 
 use crate::{
-    EthgasNodeExtension, FromExtensionConfig,
+    EthgasNodeExtension, FromExtensionConfig, PendingStateSource,
     test_utils::{
         constants::{BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, NODE_STARTUP_DELAY_MS},
         engine::EngineApi,
@@ -32,6 +32,7 @@ use crate::{
 pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn EthgasNodeExtension>>,
     chain_spec: Option<Arc<ChainSpec>>,
+    pending_state: Option<Arc<dyn PendingStateSource>>,
 }
 
 impl TestHarnessBuilder {
@@ -58,6 +59,12 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Set the source the `eth` API answers the `pending` tag from.
+    pub fn with_pending_state(mut self, pending_state: Arc<dyn PendingStateSource>) -> Self {
+        self.pending_state = Some(pending_state);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -67,7 +74,7 @@ impl TestHarnessBuilder {
             Arc::new(ChainSpec::from(genesis))
         });
 
-        let node = LocalNode::new(self.extensions, chain_spec).await?;
+        let node = LocalNode::new(self.extensions, chain_spec, self.pending_state).await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
@@ -130,6 +137,18 @@ impl TestHarness {
     /// Transactions are submitted to the node's transaction pool before triggering
     /// the engine to build a block that will include them.
     pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
+        let SubmittedBlock { parent_hash, hash } = self.submit_block(transactions).await?;
+        self.engine.update_forkchoice(parent_hash, hash, None).await?;
+        Ok(())
+    }
+
+    /// Like [`Self::build_block_from_transactions`] without the forkchoice update: the engine
+    /// executes the block and holds it as pending. Returns the block hash.
+    pub async fn submit_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<B256> {
+        Ok(self.submit_block(transactions).await?.hash)
+    }
+
+    async fn submit_block(&self, transactions: Vec<Bytes>) -> Result<SubmittedBlock> {
         // Submit transactions to the mempool so the payload builder picks them up.
         let provider = self.provider();
         for tx in &transactions {
@@ -183,13 +202,11 @@ impl TestHarness {
             return Err(eyre!("Engine rejected payload: {:?}", payload_status));
         }
 
-        let new_block_hash = payload_status
+        let hash = payload_status
             .latest_valid_hash
             .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
 
-        self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
-
-        Ok(())
+        Ok(SubmittedBlock { parent_hash, hash })
     }
 
     /// Advance the canonical chain by `n` empty blocks.
@@ -220,4 +237,9 @@ impl TestHarness {
     pub fn chain_id(&self) -> u64 {
         self.chain_spec().chain().id()
     }
+}
+
+struct SubmittedBlock {
+    parent_hash: B256,
+    hash: B256,
 }

@@ -2,8 +2,10 @@
 
 pub mod cli;
 
-use ethgas_flashblocks_node::FlashblocksExtension;
-use ethgas_node_runner::EthgasNodeRunner;
+use std::sync::Arc;
+
+use ethgas_flashblocks_node::{FlashblocksExtension, FlashblocksPendingState};
+use ethgas_node_runner::{EthgasNodeRunner, PendingStateSource};
 use ethgas_reth_flashblocks::FlashblocksConfig;
 use reth_ethereum_cli::{Cli, chainspec::EthereumChainSpecParser};
 
@@ -21,7 +23,14 @@ fn main() {
         let mut runner = EthgasNodeRunner::new();
 
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
+
+        let pending_state = flashblocks_config.as_ref().map(|config| {
+            Arc::new(FlashblocksPendingState::new(Arc::clone(&config.state)))
+                as Arc<dyn PendingStateSource>
+        });
+
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
+        runner.set_pending_state(pending_state);
 
         runner.run(builder).await
     })

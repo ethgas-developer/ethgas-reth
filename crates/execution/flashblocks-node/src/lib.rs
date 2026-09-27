@@ -7,5 +7,8 @@
 mod extension;
 pub use extension::FlashblocksExtension;
 
+mod pending_state;
+pub use pending_state::FlashblocksPendingState;
+
 #[cfg(feature = "test-utils")]
 pub mod test_harness;

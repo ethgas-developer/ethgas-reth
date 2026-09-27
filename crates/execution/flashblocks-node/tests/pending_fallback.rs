@@ -2,8 +2,8 @@
 //!
 //! The eth methods this node overrides answer `pending` from the flashblocks snapshot. Every other
 //! method resolves `pending` through reth, which by default builds a block out of its own pool.
-//! `EthgasEthApi` overrides `local_pending_state` and `local_pending_block` so those methods read
-//! canonical state instead. These tests hold that contract from the RPC surface.
+//! `EthgasEthApi` overrides `local_pending_block` and `local_pending_state` so that never
+//! happens. No flashblock is sent here, so `pending` must resolve to canonical state.
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Bytes, U256};
@@ -14,9 +14,8 @@ use eyre::Result;
 
 /// A contract deployed only in the pool must not exist at `pending`.
 ///
-/// `eth_getCode` is not one of the overridden methods, so it lands on the locally built pending
-/// block. If that block were pool-built the deployment would already be visible there, in a block
-/// no builder ever produced.
+/// `eth_getCode` is not one of the overridden methods, so it reads reth's pending state. If that
+/// state were pool-built, the deployment would already be visible in a block no builder produced.
 #[tokio::test]
 async fn pool_only_deployment_is_invisible_at_pending() -> Result<()> {
     let harness = FlashblocksHarness::new().await?;
@@ -44,8 +43,7 @@ async fn pool_only_deployment_is_invisible_at_pending() -> Result<()> {
 
 /// Storage written only by a pool transaction must not be readable at `pending`.
 ///
-/// This guards the state path rather than the block path: `local_pending_state` returning `None` is
-/// what makes `pending` resolve against canonical state. `DoubleCounter` initialises `count1` to 1,
+/// Guards the state path rather than the block path. `DoubleCounter` initialises `count1` to 1,
 /// so a pool-built pending state would report 1 for a contract the chain has never seen.
 #[tokio::test]
 async fn storage_written_only_in_the_pool_is_invisible_at_pending() -> Result<()> {

@@ -39,7 +39,7 @@ mod tests {
     use reth_primitives_traits::{Account, Block, RecoveredBlock, SealedHeader};
     use reth_provider::{
         BlockWriter, ChainSpecProvider, ExecutionOutcome, LatestStateProviderRef, ProviderFactory,
-        StateProviderFactory, providers::BlockchainProvider,
+        StateProvider, StateProviderFactory, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_node_types,
     };
     use std::{sync::Arc, time::Duration};
@@ -240,7 +240,9 @@ mod tests {
 
             // Execute the block to produce a block execution output
             let mut block_execution_output = EthEvmConfig::ethereum(self.provider.chain_spec())
-                .batch_executor(StateProviderDatabase::new(LatestStateProviderRef::new(&provider)))
+                .batch_executor(StateProviderDatabase::new(
+                    LatestStateProviderRef::new(&provider).into_evm_state_provider(),
+                ))
                 .execute(&block)
                 .unwrap();
 

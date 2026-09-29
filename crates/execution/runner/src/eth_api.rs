@@ -404,7 +404,7 @@ where
 
         let cached = self.cache().get_block_and_receipts(latest.hash()).await?;
 
-        Ok(cached.map(|(block, receipts)| BlockAndReceipts { block, receipts }))
+        Ok(cached.map(|(block, receipts)| BlockAndReceipts::new(block, receipts)))
     }
 }
 

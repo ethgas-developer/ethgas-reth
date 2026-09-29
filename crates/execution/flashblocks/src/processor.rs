@@ -25,7 +25,7 @@ use reth_ethereum_primitives::Block;
 use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes, block::SystemCaller};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_primitives_traits::RecoveredBlock;
-use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_provider::{BlockReaderIdExt, StateProvider, StateProviderFactory};
 use reth_revm::{
     DatabaseCommit, State, context::result::ResultAndState, database::StateProviderDatabase,
     db::states::bundle_state::BundleRetention,
@@ -562,7 +562,8 @@ where
             .client
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
-        let state_provider_db = StateProviderDatabase::new(state_provider);
+        let state_provider_db =
+            StateProviderDatabase::new(state_provider.into_evm_state_provider());
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         // Track state changes across flashblocks, accumulating bundle state

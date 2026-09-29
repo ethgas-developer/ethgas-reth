@@ -5,12 +5,19 @@
 //! `EthgasEthApi` overrides `local_pending_block` and `local_pending_state` so that never
 //! happens. No flashblock is sent here, so `pending` must resolve to canonical state.
 
+use std::sync::Arc;
+
+use alloy_consensus::{Header, Sealable};
 use alloy_eips::BlockId;
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{B256, Bytes, U256};
 use alloy_provider::Provider;
 use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
-use ethgas_node_runner::test_utils::{Account, DoubleCounter};
+use ethgas_node_runner::{
+    PendingOverlay, PendingStateSource,
+    test_utils::{Account, DoubleCounter, TestHarnessBuilder},
+};
 use eyre::Result;
+use reth_revm::db::BundleState;
 
 /// A contract deployed only in the pool must not exist at `pending`.
 ///
@@ -63,4 +70,33 @@ async fn storage_written_only_in_the_pool_is_invisible_at_pending() -> Result<()
     );
 
     Ok(())
+}
+
+/// An overlay whose anchor is not on the chain has no coherent state, so `pending` must fall back
+/// to canonical state rather than fail.
+#[tokio::test]
+async fn overlay_anchored_off_the_chain_falls_back_to_canonical() -> Result<()> {
+    let harness =
+        TestHarnessBuilder::new().with_pending_state(Arc::new(OffChainAnchor)).build().await?;
+    let provider = harness.provider();
+    let alice = Account::Alice.address();
+
+    assert_eq!(
+        provider.get_balance(alice).block_id(BlockId::pending()).await?,
+        provider.get_balance(alice).block_id(BlockId::latest()).await?,
+    );
+
+    Ok(())
+}
+
+/// Supplies an overlay anchored on a block the chain has never seen.
+#[derive(Debug)]
+struct OffChainAnchor;
+
+impl PendingStateSource for OffChainAnchor {
+    fn pending_overlay(&self) -> Option<PendingOverlay> {
+        let anchor =
+            Header { parent_hash: B256::repeat_byte(0xab), ..Default::default() }.seal_slow();
+        Some(PendingOverlay::from_bundle(anchor, 1, BundleState::default()))
+    }
 }

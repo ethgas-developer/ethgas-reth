@@ -5,14 +5,17 @@
 
 use std::{future::Future, sync::Arc};
 
-use alloy_eips::{BlockNumberOrTag, eip2718::WithEncoded};
+use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::WithEncoded};
 use alloy_network::Ethereum;
 use alloy_primitives::{B256, U256};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeComponents, HeaderTy, NodeTypes, PrimitivesTy};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
-use reth_provider::{BlockReaderIdExt, ProviderHeader, StateProviderBox};
+use reth_provider::{
+    BlockIdReader, BlockReaderIdExt, ProviderError, ProviderHeader, StateProviderBox,
+    StateProviderFactory,
+};
 use reth_rpc::{EthApi, eth::core::EthRpcConverterFor};
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, RpcConvert, RpcNodeCore, RpcNodeCoreExt,
@@ -31,24 +34,36 @@ use reth_rpc_eth_types::{
     builder::config::PendingBlockKind,
 };
 use reth_tasks::pool::{BlockingTaskGuard, BlockingTaskPool};
+
+use reth_chain_state::BlockState;
+
+use crate::pending_state::PendingStateSource;
 use reth_transaction_pool::{PoolTx, TransactionOrigin};
 
 /// The node's `eth` API.
 #[derive(Debug)]
 pub struct EthgasEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
     inner: EthApi<N, Rpc>,
+    pending_state: Option<Arc<dyn PendingStateSource>>,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> Clone for EthgasEthApi<N, Rpc> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self { inner: self.inner.clone(), pending_state: self.pending_state.clone() }
     }
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> EthgasEthApi<N, Rpc> {
     /// Wraps a reth [`EthApi`].
-    pub const fn new(inner: EthApi<N, Rpc>) -> Self {
-        Self { inner }
+    pub const fn new(
+        inner: EthApi<N, Rpc>,
+        pending_state: Option<Arc<dyn PendingStateSource>>,
+    ) -> Self {
+        Self { inner, pending_state }
+    }
+
+    fn serves_pending_overlay(&self) -> bool {
+        self.pending_state.as_ref().is_some_and(|source| source.pending_overlay().is_some())
     }
 
     /// Returns the wrapped reth [`EthApi`].
@@ -193,6 +208,27 @@ where
     fn max_proof_window(&self) -> u64 {
         self.inner.max_proof_window()
     }
+
+    /// Refuses `pending` while an overlay is served.
+    ///
+    /// `eth_getProof`, `eth_getMultiProof` and `eth_getAccount` are the only callers. The overlay
+    /// has no trie data, so a proof over it would be well-formed and match no block. Without an
+    /// overlay, `pending` resolves to a real executed block and reth's own check applies.
+    fn ensure_within_proof_window(&self, block_id: BlockId) -> Result<(), Self::Error>
+    where
+        Self: EthApiSpec,
+    {
+        if block_id.is_pending() && self.serves_pending_overlay() {
+            return Err(EthApiError::InvalidParams(
+                "pending is not supported by this method: pending state is built from \
+                 flashblocks and carries no state root, so no proof can be derived from it"
+                    .to_string(),
+            )
+            .into());
+        }
+
+        self.inner.ensure_within_proof_window(block_id).map_err(Into::into)
+    }
 }
 
 impl<N, Rpc> EthFees for EthgasEthApi<N, Rpc>
@@ -323,16 +359,35 @@ where
         self.inner.pending_block_kind()
     }
 
-    /// Never overlays a pool-built block on latest.
+    /// Answers `pending` from the flashblocks snapshot, overlaid on the block it was built on.
     ///
-    /// The flashblocks snapshot is the only pending state this node recognises. A pool-built
-    /// overlay would answer `pending` with transactions no builder selected, in an order no
-    /// builder chose.
+    /// Every pending state read this node does not override passes through here. `Ok(None)`
+    /// resolves through `BlockchainProvider::pending()`: the engine's pending block when it holds
+    /// one, the latest block otherwise, never a pool-built block.
     async fn local_pending_state(&self) -> Result<Option<StateProviderBox>, Self::Error>
     where
         Self: SpawnBlocking,
     {
-        Ok(None)
+        let Some(overlay) = self.pending_state.as_ref().and_then(|source| source.pending_overlay())
+        else {
+            return Ok(None);
+        };
+
+        // An executed engine block at least as new as the snapshot is the better answer: it holds
+        // the transactions that sealed and the withdrawals the bundle omits.
+        if let Ok(Some(engine_pending)) = self.provider().pending_block_num_hash() &&
+            engine_pending.number >= overlay.latest_block_number
+        {
+            return Ok(None);
+        }
+
+        // The bundle is only coherent on the exact block it was executed against.
+        let historical = self.provider().history_by_block_hash(overlay.anchor.hash()).map_err(
+            |err| -> Self::Error { <EthApiError as From<ProviderError>>::from(err).into() },
+        )?;
+
+        Ok(Some(Box::new(BlockState::new(overlay.executed).state_provider(historical))
+            as StateProviderBox))
     }
 
     /// Returns the canonical tip as the locally built pending block.
@@ -377,8 +432,17 @@ where
 
 /// Builds [`EthgasEthApi`] in place of reth's own `eth` API.
 #[derive(Debug, Default)]
-#[non_exhaustive]
-pub struct EthgasEthApiBuilder;
+pub struct EthgasEthApiBuilder {
+    pending_state: Option<Arc<dyn PendingStateSource>>,
+}
+
+impl EthgasEthApiBuilder {
+    /// Builds an `eth` API that answers `pending` from `pending_state`, or from the provider when
+    /// it is `None`.
+    pub const fn new(pending_state: Option<Arc<dyn PendingStateSource>>) -> Self {
+        Self { pending_state }
+    }
+}
 
 impl<N> EthApiBuilder<N> for EthgasEthApiBuilder
 where
@@ -399,6 +463,9 @@ where
     type EthApi = EthgasEthApi<N, EthRpcConverterFor<N, Ethereum>>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
-        Ok(EthgasEthApi::new(ctx.eth_api_builder().map_converter(|r| r.with_network()).build()))
+        Ok(EthgasEthApi::new(
+            ctx.eth_api_builder().map_converter(|r| r.with_network()).build(),
+            self.pending_state,
+        ))
     }
 }

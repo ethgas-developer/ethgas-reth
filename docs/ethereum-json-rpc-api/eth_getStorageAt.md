@@ -4,7 +4,7 @@ Returns the value in a contract storage slot.
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Not yet** — planned; today `pending` returns the latest confirmed block |
+| Flashblocks `pending` | **Yes** |
 
 ## Parameters
 
@@ -43,9 +43,11 @@ Returns the value in a contract storage slot.
 
 ## Behaviour at `pending` on this node
 
-> **Not available yet.** Today `pending` returns the latest confirmed block for this method, so it
-> will not show changes made by transactions that are only pre-confirmed. The behaviour described
-> below is planned.
+A slot written by a pre-confirmed transaction reads back at `pending` before its block is sealed,
+the same as `eth_getCode`. The value comes from the node's own execution of the flashblock
+transactions on top of the latest confirmed block.
 
-Once available, a slot written by a pre-confirmed transaction will read back at `pending` before its
-block is sealed, the same as `eth_getCode`.
+A slot written only by a transaction in the node's mempool is never visible at `pending`.
+
+To prove a slot value, use `eth_getProof` at `latest` or at a block number. It refuses `pending`,
+because pre-confirmed state has no state root.

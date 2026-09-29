@@ -66,7 +66,8 @@ pub struct PendingBlocksBuilder {
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
 
-    bundle_state: BundleState,
+    bundle_state: Arc<BundleState>,
+    anchor: Option<Sealed<Header>>,
 }
 
 impl Default for PendingBlocksBuilder {
@@ -89,7 +90,8 @@ impl PendingBlocksBuilder {
             transaction_state: HashMap::new(),
             transaction_senders: HashMap::new(),
             state_overrides: None,
-            bundle_state: BundleState::default(),
+            bundle_state: Arc::new(BundleState::default()),
+            anchor: None,
         }
     }
 
@@ -162,7 +164,14 @@ impl PendingBlocksBuilder {
     /// Sets the accumulated bundle state.
     #[inline]
     pub fn with_bundle_state(&mut self, bundle_state: BundleState) -> &Self {
-        self.bundle_state = bundle_state;
+        self.bundle_state = Arc::new(bundle_state);
+        self
+    }
+
+    /// Records the canonical header the bundle was executed against.
+    #[inline]
+    pub fn with_anchor(&mut self, anchor: Sealed<Header>) -> &Self {
+        self.anchor = Some(anchor);
         self
     }
 
@@ -188,6 +197,7 @@ impl PendingBlocksBuilder {
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             bundle_state: self.bundle_state,
+            anchor: self.anchor,
         })
     }
 }
@@ -209,7 +219,8 @@ pub struct PendingBlocks {
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
 
-    bundle_state: BundleState,
+    bundle_state: Arc<BundleState>,
+    anchor: Option<Sealed<Header>>,
 }
 
 impl PendingBlocks {
@@ -279,6 +290,18 @@ impl PendingBlocks {
         self.transaction_senders.get(tx_hash).copied()
     }
 
+    /// Returns the canonical header the bundle was executed against.
+    #[inline]
+    pub const fn anchor(&self) -> Option<&Sealed<Header>> {
+        self.anchor.as_ref()
+    }
+
+    /// Returns a shared handle to the bundle state.
+    #[inline]
+    pub fn bundle_state(&self) -> Arc<BundleState> {
+        Arc::clone(&self.bundle_state)
+    }
+
     /// Returns a clone of the bundle state.
     ///
     /// NOTE: This clones the entire `BundleState`, which contains a `HashMap` of all touched
@@ -289,7 +312,7 @@ impl PendingBlocks {
         let metrics = Metrics::default();
         let size = self.bundle_state.state.len();
         let start = Instant::now();
-        let cloned = self.bundle_state.clone();
+        let cloned = (*self.bundle_state).clone();
         metrics.bundle_state_clone_duration.record(start.elapsed());
         metrics.bundle_state_clone_size.record(size as f64);
         cloned

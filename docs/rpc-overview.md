@@ -7,8 +7,9 @@ flashblocks support. It serves the standard Ethereum JSON-RPC interface. When yo
 flashblocks producer, the `pending` block tag stops meaning "a block the node invented from its own
 mempool" and starts meaning "the pre-confirmed block the builder is currently assembling".
 
-> **Some pre-confirmed state reads are not available yet.** Methods marked **Not yet** below
-> currently answer `pending` with the latest confirmed block.
+> **Proofs are the one exception.** `eth_getProof`, `eth_getMultiProof` and `eth_getAccount` refuse
+> the `pending` tag, because pre-confirmed state has no state root to prove against. See
+> [`eth_getProof`](./ethereum-json-rpc-api/eth_getProof.md).
 
 ---
 
@@ -33,6 +34,7 @@ block the builder is actually assembling right now.
 |---|---|
 | **The flashblock being built** | For the methods marked **Yes** below |
 | **The latest confirmed block** | For everything else that takes a block tag, and whenever no flashblock data is available |
+| **An error** | For the three proof methods, which cannot prove pre-confirmed state |
 
 Two guarantees follow, and both are deliberate:
 
@@ -41,13 +43,17 @@ Two guarantees follow, and both are deliberate:
 2. **A sealed block always wins.** If the network has already produced the block, you are served
    that block rather than a reconstruction of it.
 
+Code and storage at `pending`, and balances the builder did not report, come from the node's own
+execution of the flashblock transactions on top of the latest confirmed block. That is the same
+execution `eth_call` at `pending` runs against, so the two agree.
+
 ---
 
 ## API reference
 
-> **Info.** **Yes** means `pending` reflects the flashblock being built. **Not yet** means that is
-> planned, and `pending` currently returns the latest confirmed block. **No** means `pending`
-> returns the latest confirmed block. **n/a** means the method takes no block parameter.
+> **Info.** **Yes** means `pending` reflects the flashblock being built. **No** means `pending`
+> returns the latest confirmed block. **Refused** means the call returns an error for `pending`.
+> **n/a** means the method takes no block parameter.
 
 ### Ethereum JSON-RPC API
 
@@ -60,12 +66,18 @@ Methods where this node does something you need to know about have their own pag
 | [`eth_call`](./ethereum-json-rpc-api/eth_call.md) | Execute a call without creating a transaction | **Yes** |
 | [`eth_estimateGas`](./ethereum-json-rpc-api/eth_estimateGas.md) | Estimate gas for a transaction | **Yes** |
 | [`eth_simulateV1`](./flashblocks-api/eth_simulateV1.md) | Simulate transaction bundles against pre-confirmed state | **Yes** |
-| [`eth_getBalance`](./ethereum-json-rpc-api/eth_getBalance.md) | Account balance | **Yes**, for reported balances |
+| [`eth_getBalance`](./ethereum-json-rpc-api/eth_getBalance.md) | Account balance | **Yes** |
 | [`eth_getTransactionCount`](./ethereum-json-rpc-api/eth_getTransactionCount.md) | Account nonce | **Yes** |
-| [`eth_getCode`](./ethereum-json-rpc-api/eth_getCode.md) | Contract bytecode | **Not yet** |
-| [`eth_getStorageAt`](./ethereum-json-rpc-api/eth_getStorageAt.md) | Contract storage slot | **Not yet** |
-| `eth_getAccountInfo` | Account balance, nonce and code in one call | **Not yet** |
-| `eth_getStorageValues` | Several storage slots in one call | **Not yet** |
+| [`eth_getCode`](./ethereum-json-rpc-api/eth_getCode.md) | Contract bytecode | **Yes** |
+| [`eth_getStorageAt`](./ethereum-json-rpc-api/eth_getStorageAt.md) | Contract storage slot | **Yes** |
+| `eth_getAccountInfo` | Account balance, nonce and code in one call | **Yes** |
+| `eth_getStorageValues` | Several storage slots in one call | **Yes** |
+| [`eth_getProof`](./ethereum-json-rpc-api/eth_getProof.md) | Merkle proof of an account and its storage | **Refused** |
+| `eth_getMultiProof` | Merkle proofs of several accounts in one call | **Refused** |
+| `eth_getAccount` | Account with its storage root | **Refused** |
+| `eth_createAccessList` | Access list a transaction would need | **No** |
+| `debug_traceCall` | Trace a call | **No** |
+| `trace_call` | Trace a call, in the `trace` namespace | **No** |
 | [`eth_getBlockByNumber`](./ethereum-json-rpc-api/eth_getBlockByNumber.md) | Block by number or tag | **Yes** |
 | [`eth_getBlockTransactionCountByNumber`](./ethereum-json-rpc-api/eth_getBlockTransactionCountByNumber.md) | Transaction count of a block | **Yes** |
 | [`eth_getLogs`](./ethereum-json-rpc-api/eth_getLogs.md) | Logs matching a filter, including pending flashblock logs | **Yes** |

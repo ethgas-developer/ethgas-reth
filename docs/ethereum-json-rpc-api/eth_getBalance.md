@@ -4,7 +4,7 @@ Returns the ETH balance of an account.
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Yes**, for balances the builder reports. **Not yet** for other addresses |
+| Flashblocks `pending` | **Yes** |
 
 ## Parameters
 
@@ -44,11 +44,10 @@ Returns the ETH balance of an account.
 
 `pending` is answered in two ways, depending on the address.
 
-1. **If the builder reported a new balance for the address in the current flashblock**, you get that
-   balance. This is live, and it is the case that matters for an account transacting right now.
-2. **If the address is not among those the builder touched**, you get its balance at the latest
-   confirmed block.
+1. **If the builder reported a new balance for the address in the current flashblock**, you get
+   that balance, straight from the flashblock.
+2. **Otherwise**, you get the balance from the node's own execution of the pre-confirmed
+   transactions on top of the latest confirmed block.
 
-> **Case 2 will improve.** It is planned that addresses the builder did not touch will also be
-> answered from pre-confirmed state. Until then, treat a balance for an untouched address as being
-> as of the latest confirmed block.
+Both are live. One difference: the node's own execution does not apply the pending block's
+withdrawals, so in case 2 a withdrawal credit appears only once the block is sealed.

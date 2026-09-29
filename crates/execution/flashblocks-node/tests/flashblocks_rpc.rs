@@ -43,6 +43,9 @@ const TRANSFER_ETH_TX: Bytes = bytes!(
 );
 const TRANSFER_ETH_HASH: TxHash =
     b256!("0x706bbbf402a4f55831d250c77be8f368e16d9b63df9d58561cea8d1f2b59030b");
+/// Receives the 50 ETH of `TRANSFER_ETH_TX`
+const TRANSFER_ETH_RECIPIENT: Address = address!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+const PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000000abc");
 
 struct TestSetup {
     harness: FlashblocksHarness,
@@ -66,8 +69,14 @@ struct TransactionDetails {
 
 impl TestSetup {
     async fn new() -> Result<Self> {
-        let harness = FlashblocksHarness::new().await?;
+        Self::with_harness(FlashblocksHarness::new().await?)
+    }
 
+    async fn manual_canonical() -> Result<Self> {
+        Self::with_harness(FlashblocksHarness::manual_canonical().await?)
+    }
+
+    fn with_harness(harness: FlashblocksHarness) -> Result<Self> {
         let provider = harness.provider();
         let deployer = Account::Deployer;
         let alice = Account::Alice;
@@ -726,6 +735,139 @@ fn logs_payload(logs: Vec<PrimitiveLog>) -> FlashBlock {
             inclusion_fee: None,
         },
     }
+}
+
+// ============================ pending state (the overlay) ============================
+//
+// Methods this node does not override answer `pending` through `EthgasEthApi::local_pending_state`.
+
+#[tokio::test]
+async fn test_pending_code_and_storage_come_from_flashblocks() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    let counter = setup.txn_details.counter_address;
+
+    assert!(provider.get_code_at(counter).await?.is_empty());
+    assert!(provider.get_code_at(counter).pending().await?.is_empty());
+
+    setup.send_flashblock(setup.create_first_payload()).await?;
+    assert!(
+        provider.get_code_at(counter).pending().await?.is_empty(),
+        "the first flashblock deploys nothing"
+    );
+
+    setup.send_flashblock(setup.create_second_payload()).await?;
+
+    let pending_code = provider.get_code_at(counter).pending().await?;
+    assert_eq!(
+        pending_code,
+        DoubleCounter::DEPLOYED_BYTECODE,
+        "pending must see a contract deployed inside a flashblock"
+    );
+
+    // `count1` is slot 0. It initialises to 1 and the same flashblock increments it once.
+    let pending_slot0 = provider.get_storage_at(counter, U256::ZERO).pending().await?;
+    assert_eq!(pending_slot0, U256::from(2), "pending must see storage written by a flashblock");
+
+    assert!(
+        provider.get_code_at(counter).await?.is_empty(),
+        "the overlay must not leak into the canonical tag"
+    );
+    assert_eq!(provider.get_storage_at(counter, U256::ZERO).await?, U256::ZERO);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_get_proof_refuses_pending() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    setup.send_test_payloads().await?;
+
+    let err = provider
+        .get_proof(setup.txn_details.counter_address, vec![])
+        .pending()
+        .await
+        .expect_err("eth_getProof must refuse the pending tag");
+    assert!(err.to_string().contains("state root"), "the refusal should say why, got: {err}");
+    assert!(
+        err.to_string().contains("-32602"),
+        "the refusal must be an invalid-params error: {err}"
+    );
+
+    let proof = provider.get_proof(setup.txn_details.counter_address, vec![]).await?;
+    assert_eq!(proof.address, setup.txn_details.counter_address);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pending_balance_miss_path_comes_from_flashblocks() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    setup.send_test_payloads().await?;
+
+    assert_eq!(provider.get_balance(TRANSFER_ETH_RECIPIENT).await?, U256::ZERO);
+
+    assert_eq!(
+        provider.get_balance(TRANSFER_ETH_RECIPIENT).pending().await?,
+        U256::from(50_000_000_000_000_000_000_u128),
+        "a balance the builder did not report must come from the flashblocks bundle"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pending_state_is_anchored_to_the_block_the_bundle_was_built_on() -> Result<()> {
+    let setup = TestSetup::manual_canonical().await?;
+    let provider = setup.harness.provider();
+    setup.send_test_payloads().await?;
+
+    // A canonical block the bundle was not executed on.
+    let (transfer_tx, _) = Account::Charlie.sign_txn_request(
+        TransactionRequest::default().to(PROBE_ADDRESS).value(U256::from(777)).nonce(0),
+    )?;
+    setup.harness.build_block_from_transactions(vec![transfer_tx]).await?;
+    assert_eq!(provider.get_block_number().await?, 1);
+    assert_eq!(provider.get_balance(PROBE_ADDRESS).await?, U256::from(777));
+
+    assert_eq!(
+        provider.get_balance(PROBE_ADDRESS).pending().await?,
+        U256::ZERO,
+        "pending must be anchored to the block the bundle was built on"
+    );
+
+    // The snapshot itself still answers.
+    assert_eq!(
+        provider.get_code_at(setup.txn_details.counter_address).pending().await?,
+        DoubleCounter::DEPLOYED_BYTECODE
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pending_state_defers_to_the_engine_pending_block() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    setup.send_test_payloads().await?;
+
+    // Executed by the engine, not yet canonical.
+    let (transfer_tx, _) = Account::Charlie.sign_txn_request(
+        TransactionRequest::default().to(PROBE_ADDRESS).value(U256::from(999)).nonce(0),
+    )?;
+    setup.harness.submit_block_from_transactions(vec![transfer_tx]).await?;
+    assert_eq!(provider.get_block_number().await?, 0, "the block must not be canonical");
+    assert_eq!(provider.get_balance(PROBE_ADDRESS).await?, U256::ZERO);
+
+    assert_eq!(
+        provider.get_balance(PROBE_ADDRESS).pending().await?,
+        U256::from(999),
+        "an executed engine block at least as new as the snapshot must outrank the overlay"
+    );
+
+    Ok(())
 }
 
 #[tokio::test]

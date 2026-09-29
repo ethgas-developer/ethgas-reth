@@ -4,7 +4,7 @@ Returns the contract bytecode deployed at an address.
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Not yet** — planned; today `pending` returns the latest confirmed block |
+| Flashblocks `pending` | **Yes** |
 
 ## Parameters
 
@@ -42,11 +42,10 @@ Returns the contract bytecode deployed at an address.
 
 ## Behaviour at `pending` on this node
 
-> **Not available yet.** Today `pending` returns the latest confirmed block for this method, so it
-> will not show changes made by transactions that are only pre-confirmed. The behaviour described
-> below is planned.
+`pending` shows a contract deployed by a pre-confirmed transaction, before its block is sealed. The
+code comes from the node's own execution of the flashblock transactions on top of the latest
+confirmed block, so it agrees with what `eth_call` at `pending` runs against.
 
-Once available, `pending` will show a contract deployed by a pre-confirmed transaction, before its
-block is sealed.
+A contract that exists only in the node's mempool is never visible at `pending`.
 
 The bytecode returned is the account's original bytecode, not a padded representation.

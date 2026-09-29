@@ -47,6 +47,7 @@ docker run -d --name ethgas-node \
 | `--flashblocks-url <URL>` | WebSocket endpoint streaming flashblocks. Alias `--websocket-url`. Setting it enables the feature | _disabled_ |
 | `--max-pending-blocks-depth <N>` | Pending blocks held in memory | `3` |
 | `--flashblocks.ping-interval <DUR>` | Ping interval, and also the pong deadline. A dead feed is detected after at most two intervals. Requires `--flashblocks-url` | `2s` |
+| `--flashblocks.fee-max-age <DUR>` | How long the builder's inclusion fee is served after its flashblock arrived, by `ethgas_inclusionPriorityFee`, `eth_maxPriorityFeePerGas` and `eth_gasPrice`. Requires `--flashblocks-url` | `15s` |
 
 ## Flashblocks endpoints
 

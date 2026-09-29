@@ -18,6 +18,7 @@ mempool" and starts meaning "the pre-confirmed block the builder is currently as
 - [What `pending` means on this node](#what-pending-means-on-this-node)
 - [API reference](#api-reference)
   - [Ethereum JSON-RPC API](#ethereum-json-rpc-api)
+  - [ETHGas namespace](#ethgas-namespace)
   - [Flashblocks subscriptions](#flashblocks-subscriptions)
 
 ---
@@ -42,6 +43,13 @@ Two guarantees follow, and both are deliberate:
    real block that was actually executed — never a speculative one assembled locally.
 2. **A sealed block always wins.** If the network has already produced the block, you are served
    that block rather than a reconstruction of it.
+
+The second guarantee has one visible effect on the methods marked **No** below. When the node has
+executed the next block for its consensus client but has not yet made it canonical, those methods
+answer `pending` from that executed block, not from the latest confirmed block. `eth_feeHistory` is
+the exception: it always uses the latest confirmed block. The three call-tracing methods use the
+executed block's state too, unless the flashblock being built reaches further ahead, in which case
+they use the flashblock state.
 
 Code and storage at `pending`, and balances the builder did not report, come from the node's own
 execution of the flashblock transactions on top of the latest confirmed block. That is the same
@@ -72,6 +80,7 @@ Methods where this node does something you need to know about have their own pag
 | [`eth_getStorageAt`](./ethereum-json-rpc-api/eth_getStorageAt.md) | Contract storage slot | **Yes** |
 | `eth_getAccountInfo` | Account balance, nonce and code in one call | **Yes** |
 | `eth_getStorageValues` | Several storage slots in one call | **Yes** |
+| `ots_hasCode` | Whether an address holds code, in the `ots` namespace. Served only when `--http.api` includes `ots` | **Yes** |
 | [`eth_getProof`](./ethereum-json-rpc-api/eth_getProof.md) | Merkle proof of an account and its storage | **Refused** |
 | `eth_getMultiProof` | Merkle proofs of several accounts in one call | **Refused** |
 | `eth_getAccount` | Account with its storage root | **Refused** |
@@ -81,7 +90,7 @@ Methods where this node does something you need to know about have their own pag
 | [`eth_getBlockByNumber`](./ethereum-json-rpc-api/eth_getBlockByNumber.md) | Block by number or tag | **Yes** |
 | [`eth_getBlockTransactionCountByNumber`](./ethereum-json-rpc-api/eth_getBlockTransactionCountByNumber.md) | Transaction count of a block | **Yes** |
 | [`eth_getLogs`](./ethereum-json-rpc-api/eth_getLogs.md) | Logs matching a filter, including pending flashblock logs | **Yes** |
-| [`eth_getTransactionByHash`](./ethereum-json-rpc-api/eth_getTransactionByHash.md) | Transaction by hash, pre-confirmed included | **Yes** |
+| [`eth_getTransactionByHash`](./ethereum-json-rpc-api/eth_getTransactionByHash.md) | Transaction by hash. Pre-confirmed included, unless this node's mempool holds it | **Yes** |
 | [`eth_getTransactionReceipt`](./ethereum-json-rpc-api/eth_getTransactionReceipt.md) | Receipt by hash, pre-confirmed included | **Yes** |
 | [`eth_sendRawTransaction`](./ethereum-json-rpc-api/eth_sendRawTransaction.md) | Submit a signed transaction | n/a |
 | [`eth_sendRawTransactionSync`](./flashblocks-api/eth_sendRawTransactionSync.md) | Submit and wait for flashblock inclusion | n/a |
@@ -91,8 +100,8 @@ Methods where this node does something you need to know about have their own pag
 | `eth_getBlockTransactionCountByHash` | Transaction count by block hash | n/a |
 | `eth_getTransactionByBlockHashAndIndex` | Transaction by block hash and index | n/a |
 | `eth_blockNumber` | Latest confirmed block number | n/a |
-| `eth_gasPrice` | Current gas price | n/a |
-| `eth_maxPriorityFeePerGas` | Suggested priority fee | n/a |
+| `eth_gasPrice` | Current gas price. With flashblocks, the next block's base fee plus the builder's inclusion fee; see [`ethgas_inclusionPriorityFee`](./flashblocks-api/ethgas_inclusionPriorityFee.md) | n/a |
+| `eth_maxPriorityFeePerGas` | Suggested priority fee. With flashblocks, the builder's inclusion fee; see [`ethgas_inclusionPriorityFee`](./flashblocks-api/ethgas_inclusionPriorityFee.md) | n/a |
 | `eth_feeHistory` | Historical fee data | **No** |
 | `eth_chainId` | Chain ID | n/a |
 | `eth_syncing` | Sync status | n/a |
@@ -116,6 +125,14 @@ larger value is rejected with `-32602`.
   "id": 1
 }
 ```
+
+### ETHGas namespace
+
+Available only with `--flashblocks-url`, on every configured transport, whatever `--http.api` says.
+
+| Method | Description | Flashblocks `pending` |
+|---|---|:---:|
+| [`ethgas_inclusionPriorityFee`](./flashblocks-api/ethgas_inclusionPriorityFee.md) | The priority fee that clears the builder's inclusion gate, with its source and age | n/a |
 
 ### Flashblocks subscriptions
 

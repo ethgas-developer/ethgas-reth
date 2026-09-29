@@ -56,11 +56,21 @@ Returns a transaction by its hash.
 
 ## Behaviour at `pending` on this node
 
-Confirmed data is checked first, then pre-confirmed flashblock data, so a pre-confirmed
-transaction is visible here before its block is sealed.
+Three sources are checked, in this order: the sealed chain, this node's mempool, and the flashblock
+being built. The first one that knows the hash answers.
 
-**A pending transaction has `blockHash: null`** while it carries a real `blockNumber`. That pairing
-is how you tell a pre-confirmed transaction from a mined one. Treat a non-null `blockHash` as the
-signal that the transaction is in a sealed block.
+- **Sealed.** `blockHash` is non-null. This is the only signal that the transaction is in a block.
+- **In this node's mempool.** `blockHash`, `blockNumber` and `transactionIndex` are all `null`, and
+  they stay `null` after the builder sequences the transaction, until its block is sealed. Every
+  transaction sent through this node with `eth_sendRawTransaction` or `eth_sendRawTransactionSync`
+  is in its mempool, and so is every transaction a peer gossiped to it.
+- **In the flashblock only.** `blockHash` is `null` while `blockNumber` and `transactionIndex` are
+  set, as in the example above. This is how a transaction looks that this node's mempool has never
+  held.
+
+So a `null` `blockNumber` does not mean the builder has not sequenced the transaction. To detect
+pre-confirmation, call [`eth_getTransactionReceipt`](./eth_getTransactionReceipt.md), which returns
+the pre-confirmed receipt in both pending cases, or submit with
+[`eth_sendRawTransactionSync`](../flashblocks-api/eth_sendRawTransactionSync.md) and wait for it.
 
 This method takes no block parameter, but it is flashblocks-aware regardless.

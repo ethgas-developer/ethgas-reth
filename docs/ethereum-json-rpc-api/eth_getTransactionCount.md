@@ -47,3 +47,8 @@ nonce to use when submitting back-to-back transactions faster than the block tim
 
 This differs from a typical node, where `pending` counts transactions sitting in the node's own
 mempool. Here it reflects what the builder actually sequenced.
+
+The count covers transactions whose sender is the address. It misses two ways a nonce rises inside
+a flashblock without such a transaction: an EIP-7702 authorization the address signed, and a
+contract creation by a contract, which raises that contract's own nonce. `eth_getAccountInfo` at
+`pending` reports the executed nonce in both cases.

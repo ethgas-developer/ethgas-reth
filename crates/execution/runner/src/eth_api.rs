@@ -9,12 +9,13 @@ use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::WithEncoded};
 use alloy_network::Ethereum;
 use alloy_primitives::{B256, U256};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
+use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeComponents, HeaderTy, NodeTypes, PrimitivesTy};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_provider::{
-    BlockIdReader, BlockReaderIdExt, ProviderError, ProviderHeader, StateProviderBox,
-    StateProviderFactory,
+    BlockIdReader, BlockNumReader, BlockReaderIdExt, ProviderError, ProviderHeader,
+    StateProviderBox, StateProviderFactory,
 };
 use reth_rpc::{EthApi, eth::core::EthRpcConverterFor};
 use reth_rpc_eth_api::{
@@ -35,8 +36,6 @@ use reth_rpc_eth_types::{
 };
 use reth_tasks::pool::{BlockingTaskGuard, BlockingTaskPool};
 
-use reth_chain_state::BlockState;
-
 use crate::pending_state::PendingStateSource;
 use reth_transaction_pool::{PoolTx, TransactionOrigin};
 
@@ -44,7 +43,7 @@ use reth_transaction_pool::{PoolTx, TransactionOrigin};
 #[derive(Debug)]
 pub struct EthgasEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
     inner: EthApi<N, Rpc>,
-    pending_state: Option<Arc<dyn PendingStateSource>>,
+    pending_state: Option<Arc<dyn PendingStateSource<N::Primitives>>>,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> Clone for EthgasEthApi<N, Rpc> {
@@ -57,7 +56,7 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> EthgasEthApi<N, Rpc> {
     /// Wraps a reth [`EthApi`].
     pub const fn new(
         inner: EthApi<N, Rpc>,
-        pending_state: Option<Arc<dyn PendingStateSource>>,
+        pending_state: Option<Arc<dyn PendingStateSource<N::Primitives>>>,
     ) -> Self {
         Self { inner, pending_state }
     }
@@ -381,13 +380,21 @@ where
             return Ok(None);
         }
 
-        // The bundle is only coherent on the exact block it was executed against.
-        let historical = self.provider().history_by_block_hash(overlay.anchor.hash()).map_err(
-            |err| -> Self::Error { <EthApiError as From<ProviderError>>::from(err).into() },
-        )?;
+        // The bundle is only coherent on the exact block it was executed against. The overlay
+        // resolves that block lazily, on its first read, so check it here: without it, `Ok(None)`
+        // falls back instead of every read failing.
+        let provider_err =
+            |err| -> Self::Error { <EthApiError as From<ProviderError>>::from(err).into() };
+        if self.provider().block_number(overlay.anchor.hash()).map_err(provider_err)?.is_none() {
+            return Ok(None);
+        }
 
-        Ok(Some(Box::new(BlockState::new(overlay.executed).state_provider(historical))
-            as StateProviderBox))
+        let state = self
+            .provider()
+            .state_with_block_appended(overlay.anchor.hash(), overlay.executed)
+            .map_err(provider_err)?;
+
+        Ok(Some(state))
     }
 
     /// Returns the canonical tip as the locally built pending block.
@@ -447,7 +454,7 @@ impl EthgasEthApiBuilder {
 impl<N> EthApiBuilder<N> for EthgasEthApiBuilder
 where
     N: FullNodeComponents<
-            Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
+            Types: NodeTypes<Primitives = EthPrimitives, ChainSpec: Hardforks + EthereumHardforks>,
             Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>,
         >,
     alloy_rpc_types::TransactionRequest:

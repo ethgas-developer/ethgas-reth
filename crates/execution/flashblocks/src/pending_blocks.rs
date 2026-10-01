@@ -408,24 +408,6 @@ impl PendingBlocks {
         self.transactions.clone()
     }
 
-    /// Returns transactions with their associated logs from only the latest flashblock (delta).
-    ///
-    /// Unlike `get_pending_transactions_with_logs`, this returns only transactions
-    /// that were added in the most recent flashblock, avoiding duplicates
-    /// when streaming via WebSocket subscriptions.
-    pub fn get_pending_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
-        let prev_count = self.previous_flashblocks_tx_count();
-
-        self.transactions
-            .iter()
-            .skip(prev_count)
-            .filter_map(|tx| {
-                let receipt = self.transaction_receipts.get(&tx.tx_hash())?;
-                Some(Self::transaction_with_logs(tx, receipt))
-            })
-            .collect()
-    }
-
     /// Returns the hashes of all pending transactions from flashblocks.
     pub fn get_pending_transaction_hashes(&self) -> Vec<B256> {
         self.transactions.iter().map(|tx| tx.tx_hash()).collect()
@@ -467,9 +449,8 @@ impl PendingBlocks {
 
     /// Returns transactions with their associated logs from only the latest flashblock (delta).
     ///
-    /// Unlike `get_pending_transactions_with_logs`, this returns only transactions
-    /// that were added in the most recent flashblock, avoiding duplicates
-    /// when streaming via WebSocket subscriptions. Transactions without a known receipt are
+    /// Only the transactions the most recent flashblock added, so a WebSocket stream emits each
+    /// transaction once. Transactions without a known receipt are
     /// skipped (rather than emitted with empty logs / no gas) so every entry is complete —
     /// matching `get_latest_flashblock_transactions_with_logs_filtered`.
     pub fn get_latest_flashblock_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
@@ -807,7 +788,7 @@ mod tests {
         let (aa, ab) = (Address::with_last_byte(0x0A), Address::with_last_byte(0x0B));
         let pending = build_pending_blocks_with_logs(&[(ha, aa), (hb, ab)]);
 
-        let txs = pending.get_pending_transactions_with_logs();
+        let txs = pending.get_latest_flashblock_transactions_with_logs();
 
         assert_eq!(txs.len(), 2);
         assert_eq!(txs[0].gas_used, 21_000);

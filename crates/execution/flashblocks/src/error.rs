@@ -65,10 +65,6 @@ pub enum ExecutionError {
     #[error("sender recovery failed: {0}")]
     SenderRecovery(String),
 
-    /// Cumulative gas used overflow.
-    #[error("gas overflow: cumulative gas used exceeded u64::MAX")]
-    GasOverflow,
-
     /// EVM environment setup error.
     #[error("EVM environment error: {0}")]
     EvmEnv(String),
@@ -177,10 +173,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::gas_overflow(
-        ExecutionError::GasOverflow,
-        "gas overflow: cumulative gas used exceeded u64::MAX"
-    )]
     #[case::evm_env(
         ExecutionError::EvmEnv("invalid chain id".to_string()),
         "EVM environment error: invalid chain id"
@@ -238,7 +230,7 @@ mod tests {
     #[rstest]
     #[case::protocol(StateProcessorError::from(ProtocolError::InvalidSequence))]
     #[case::provider(StateProcessorError::from(ProviderError::MissingCanonicalHeader { block_number: 100 }))]
-    #[case::execution(StateProcessorError::from(ExecutionError::GasOverflow))]
+    #[case::execution(StateProcessorError::from(ExecutionError::EvmEnv("env".to_string())))]
     #[case::build(StateProcessorError::from(BuildError::MissingHeaders))]
     fn test_state_processor_error_from_variants(#[case] error: StateProcessorError) {
         let debug_str = format!("{error:?}");
@@ -254,7 +246,7 @@ mod tests {
         }
 
         fn returns_err() -> Result<u32> {
-            Err(ExecutionError::GasOverflow.into())
+            Err(ExecutionError::EvmEnv("env".to_string()).into())
         }
 
         assert!(returns_ok().is_ok());
@@ -262,7 +254,7 @@ mod tests {
         assert!(returns_err().is_err());
         assert!(matches!(
             returns_err().unwrap_err(),
-            StateProcessorError::Execution(ExecutionError::GasOverflow)
+            StateProcessorError::Execution(ExecutionError::EvmEnv(_))
         ));
     }
 
@@ -300,7 +292,7 @@ mod tests {
             ProviderError::MissingCanonicalHeader { block_number: 1 }.into();
         assert!(matches!(provider_err, StateProcessorError::Provider(_)));
 
-        let execution_err: StateProcessorError = ExecutionError::GasOverflow.into();
+        let execution_err: StateProcessorError = ExecutionError::EvmEnv("env".to_string()).into();
         assert!(matches!(execution_err, StateProcessorError::Execution(_)));
 
         let build_err: StateProcessorError = BuildError::MissingHeaders.into();

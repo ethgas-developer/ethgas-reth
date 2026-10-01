@@ -3178,6 +3178,7 @@ dependencies = [
  "metrics",
  "metrics-derive",
  "rand 0.9.5",
+ "rayon",
  "reth-chainspec",
  "reth-db",
  "reth-db-common",

@@ -16,12 +16,13 @@ use alloy_consensus::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_hardforks::EthereumHardforks;
 use alloy_network::TransactionResponse;
-use alloy_primitives::{B256, BlockNumber, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, BlockNumber, map::foldhash::HashMap};
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::Log;
 use arc_swap::ArcSwapOption;
+use rayon::prelude::*;
 use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
-use reth_ethereum_primitives::Block;
+use reth_ethereum_primitives::{Block, TransactionSigned};
 use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes, block::SystemCaller};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_primitives_traits::RecoveredBlock;
@@ -500,7 +501,7 @@ where
             }
             SequenceValidationResult::Duplicate => {
                 // We have received a duplicate flashblock for the current block
-
+                self.metrics.unexpected_block_order.increment(1);
                 warn!(
                     message = "Received duplicate Flashblock for current block, ignoring",
                     curr_block = %pending_blocks.latest_block_number(),
@@ -531,6 +532,22 @@ where
                 Ok(None)
             }
         }
+    }
+
+    /// Recovers every sender before execution, in parallel: the ECDSA work is the costly part of
+    /// a rebuild, and no recovery depends on the transactions before it. A sender the previous
+    /// snapshot knows is reused.
+    fn recover_senders(
+        transactions: &[TransactionSigned],
+        cached: impl Fn(&B256) -> Option<Address> + Sync,
+    ) -> crate::error::Result<Vec<Address>> {
+        transactions
+            .par_iter()
+            .map(|transaction| match cached(transaction.tx_hash()) {
+                Some(sender) => Ok(sender),
+                None => Ok(transaction.recover_signer()?),
+            })
+            .collect()
     }
 
     fn build_pending_state(
@@ -649,22 +666,17 @@ where
                 .apply_beacon_root_contract_call(Some(base.parent_beacon_block_root), &mut evm)
                 .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
 
+            let recovery_started = Instant::now();
+            let senders = Self::recover_senders(&block.body.transactions, |tx_hash| {
+                prev_pending_blocks.as_ref().and_then(|p| p.get_transaction_sender(tx_hash))
+            })?;
+            sender_recovery += recovery_started.elapsed();
+
             let mut gas_used = 0;
             let mut next_log_index = 0;
 
             for (idx, transaction) in block.body.transactions.iter().enumerate() {
-                let sender = match prev_pending_blocks
-                    .as_ref()
-                    .and_then(|p| p.get_transaction_sender(transaction.tx_hash()))
-                {
-                    Some(cached) => cached,
-                    None => {
-                        let started = Instant::now();
-                        let sender = transaction.recover_signer()?;
-                        sender_recovery += started.elapsed();
-                        sender
-                    }
-                };
+                let sender = senders[idx];
                 pending_blocks_builder.with_transaction_sender(*transaction.tx_hash(), sender);
 
                 let receipt =
@@ -808,12 +820,33 @@ where
 mod tests {
     use std::sync::atomic::AtomicU64;
 
+    use alloy_consensus::TxLegacy;
+    use alloy_eips::eip2718::Decodable2718;
+    use alloy_primitives::{Bytes, Signature, U256, address, bytes};
     use reth_chainspec::MAINNET;
+    use reth_ethereum_primitives::Transaction;
     use reth_provider::test_utils::MockEthProvider;
     use tokio::sync::{broadcast, mpsc};
 
     use super::*;
-    use crate::payload::{ExecutionPayloadBaseV1, Metadata};
+    use crate::{
+        error::ExecutionError,
+        payload::{ExecutionPayloadBaseV1, Metadata},
+    };
+
+    /// Alice's transfer from the integration fixtures, with its known sender.
+    const SIGNED_TRANSFER: Bytes = bytes!(
+        "0x02f86b0180806482520894deadbeefdeadbeefdeadbeefdeadbeefdeadbeef8902b5e3af16b188000080c001a0c18767bf03c514933cfec05f2c9a354bf4e8eaafe2e4e7c86836bfc0fb62ad42a02b291b32c588337b7b45420076433157a440bb97afebb154988986527a6ef535"
+    );
+    const SIGNED_TRANSFER_SENDER: Address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
+
+    /// A transaction whose signature recovers to nothing.
+    fn unrecoverable(nonce: u64) -> TransactionSigned {
+        TransactionSigned::new_unhashed(
+            Transaction::Legacy(TxLegacy { nonce, ..Default::default() }),
+            Signature::new(U256::ZERO, U256::ZERO, false),
+        )
+    }
 
     fn processor() -> StateProcessor<MockEthProvider> {
         let (_updates, rx) = mpsc::unbounded_channel();
@@ -846,5 +879,45 @@ mod tests {
             processor().build_pending_state(None, &vec![flashblock]),
             Err(StateProcessorError::Protocol(ProtocolError::GenesisFlashblock))
         ));
+    }
+
+    #[test]
+    fn senders_come_back_in_transaction_order_and_known_ones_skip_recovery() {
+        let (first, second) = (unrecoverable(0), unrecoverable(1));
+        let (first_hash, second_hash) = (*first.tx_hash(), *second.tx_hash());
+        let (alice, bob) = (Address::with_last_byte(0xA1), Address::with_last_byte(0xB2));
+
+        let senders =
+            StateProcessor::<MockEthProvider>::recover_senders(&[first, second], |tx_hash| {
+                if *tx_hash == first_hash {
+                    Some(alice)
+                } else if *tx_hash == second_hash {
+                    Some(bob)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        assert_eq!(senders, vec![alice, bob]);
+    }
+
+    #[test]
+    fn a_sender_the_snapshot_does_not_know_is_recovered() {
+        let transfer = TransactionSigned::decode_2718(&mut SIGNED_TRANSFER.as_ref()).unwrap();
+
+        let senders =
+            StateProcessor::<MockEthProvider>::recover_senders(&[transfer], |_| None).unwrap();
+
+        assert_eq!(senders, vec![SIGNED_TRANSFER_SENDER]);
+    }
+
+    #[test]
+    fn an_unrecoverable_signature_fails_the_rebuild() {
+        let error =
+            StateProcessor::<MockEthProvider>::recover_senders(&[unrecoverable(0)], |_| None)
+                .unwrap_err();
+
+        assert!(matches!(error, StateProcessorError::Execution(ExecutionError::SenderRecovery(_))));
     }
 }

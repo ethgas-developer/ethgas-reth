@@ -6,7 +6,7 @@
 //! before the harness builds the flashblocks state. reth's CLI installs it before it runs the
 //! node command; this test does the same before it launches the node.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, address, b256, bytes};
@@ -270,9 +270,23 @@ async fn every_flashblocks_path_increments_its_counter() -> Result<()> {
         .await,
         1
     );
+    // The same flashblock again, now with a fee: the processor ignores the duplicate and counts
+    // it, on its own task, so the counter is polled briefly.
+    let out_of_order = counter_value("flashblocks_unexpected_block_order");
     harness
         .send_flashblock(base_payload(Some(InclusionFee { priority_fee: U256::from(7) })))
         .await?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while counter_value("flashblocks_unexpected_block_order") == out_of_order &&
+        Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        counter_value("flashblocks_unexpected_block_order") - out_of_order,
+        1,
+        "a duplicate flashblock counts as out of order"
+    );
     assert_eq!(
         growth("rpc_inclusion_fee_builder", async {
             provider.get_gas_price().await?;

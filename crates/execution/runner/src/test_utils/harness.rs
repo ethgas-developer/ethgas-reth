@@ -34,6 +34,7 @@ pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn EthgasNodeExtension>>,
     chain_spec: Option<Arc<ChainSpec>>,
     pending_state: Option<Arc<dyn PendingStateSource>>,
+    rpc_modules: Option<String>,
 }
 
 impl TestHarnessBuilder {
@@ -66,6 +67,13 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Choose the HTTP and WS modules, as `--http.api` does: a comma-separated list such as
+    /// `"eth,net,web3,ots"`. The default is reth's standard set.
+    pub fn with_rpc_modules(mut self, rpc_modules: &str) -> Self {
+        self.rpc_modules = Some(rpc_modules.to_owned());
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -75,7 +83,13 @@ impl TestHarnessBuilder {
             Arc::new(ChainSpec::from(genesis))
         });
 
-        let node = LocalNode::new(self.extensions, chain_spec, self.pending_state).await?;
+        let node = LocalNode::with_rpc_modules(
+            self.extensions,
+            chain_spec,
+            self.pending_state,
+            self.rpc_modules.as_deref(),
+        )
+        .await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

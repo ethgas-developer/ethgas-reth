@@ -69,6 +69,17 @@ impl LocalNode {
         chain_spec: Arc<ChainSpec>,
         pending_state: Option<Arc<dyn PendingStateSource>>,
     ) -> Result<Self> {
+        Self::with_rpc_modules(extensions, chain_spec, pending_state, None).await
+    }
+
+    /// Like [`Self::new`], with the HTTP and WS modules chosen as `--http.api` chooses them: a
+    /// comma-separated list such as `"eth,net,web3,ots"`. `None` keeps reth's standard set.
+    pub async fn with_rpc_modules(
+        extensions: Vec<Box<dyn EthgasNodeExtension>>,
+        chain_spec: Arc<ChainSpec>,
+        pending_state: Option<Arc<dyn PendingStateSource>>,
+        rpc_modules: Option<&str>,
+    ) -> Result<Self> {
         let exec = reth_tasks::Runtime::test();
 
         let network_config = NetworkArgs {
@@ -85,6 +96,13 @@ impl LocalNode {
 
         let mut rpc_args =
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
+        if let Some(modules) = rpc_modules {
+            let selection = modules
+                .parse()
+                .ok()
+                .ok_or_else(|| eyre::eyre!("invalid rpc module list: {modules}"))?;
+            rpc_args = rpc_args.with_api(selection);
+        }
         rpc_args.auth_ipc_path = unique_ipc_path;
 
         let eth_node = EthereumNode::default();

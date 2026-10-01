@@ -17,7 +17,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_hardforks::EthereumHardforks;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{B256, BlockNumber, map::foldhash::HashMap};
-use alloy_rpc_types::{TransactionTrait, state::StateOverride};
+use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::Log;
 use arc_swap::ArcSwapOption;
 use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
@@ -577,11 +577,6 @@ where
             None => State::builder().with_database(state_provider_db).with_bundle_update().build(),
         };
 
-        let mut state_overrides =
-            prev_pending_blocks.as_ref().map_or_else(StateOverride::default, |pending_blocks| {
-                pending_blocks.get_state_overrides().unwrap_or_default()
-            });
-
         let mut sender_recovery = Duration::ZERO;
 
         for (_block_number, flashblocks) in flashblocks_per_block {
@@ -666,7 +661,6 @@ where
                         sender
                     }
                 };
-                pending_blocks_builder.increment_nonce(sender);
                 pending_blocks_builder.with_transaction_sender(*transaction.tx_hash(), sender);
 
                 let receipt =
@@ -675,6 +669,14 @@ where
                             tx_hash: *transaction.tx_hash(),
                             sender,
                             reason: "missing receipt".to_string(),
+                        }
+                    })?;
+                let tx_gas_used =
+                    receipt.cumulative_gas_used().checked_sub(gas_used).ok_or_else(|| {
+                        crate::error::ExecutionError::TransactionFailed {
+                            tx_hash: *transaction.tx_hash(),
+                            sender,
+                            reason: "cumulative gas decreased".to_string(),
                         }
                     })?;
 
@@ -715,7 +717,7 @@ where
                     ConvertReceiptInput {
                         receipt: receipt.clone(),
                         tx: Recovered::new_unchecked(transaction, sender),
-                        gas_used: receipt.cumulative_gas_used() - gas_used,
+                        gas_used: tx_gas_used,
                         next_log_index,
                         meta,
                     };
@@ -774,24 +776,6 @@ where
                             sender,
                             reason: e.to_string(),
                         })?;
-                    for (addr, acc) in &state {
-                        let existing_override = state_overrides.entry(*addr).or_default();
-                        existing_override.balance = Some(acc.info.balance);
-                        existing_override.nonce = Some(acc.info.nonce);
-                        // `bytes()` returns revm's analysed bytecode, which is jump-table padded.
-                        // The override must carry the original deployed code.
-                        existing_override.code =
-                            acc.info.code.clone().map(|code| code.original_bytes());
-
-                        let existing =
-                            existing_override.state_diff.get_or_insert_with(Default::default);
-                        let changed_slots = acc
-                            .storage
-                            .iter()
-                            .map(|(&key, slot)| (B256::from(key), B256::from(slot.present_value)));
-
-                        existing.extend(changed_slots);
-                    }
                     pending_blocks_builder
                         .with_transaction_state(*transaction.tx_hash(), state.clone());
                     evm.db_mut().commit(state);
@@ -812,7 +796,6 @@ where
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_anchor(anchor);
-        pending_blocks_builder.with_state_overrides(state_overrides);
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }
 }

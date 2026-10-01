@@ -138,6 +138,16 @@ pub struct Metrics {
     )]
     pub rpc_get_block_transaction_count_by_number: Counter,
 
+    /// Count of times flashblocks `block_receipts` is called.
+    #[metric(describe = "Count of times flashblocks block_receipts is called")]
+    pub rpc_get_block_receipts: Counter,
+
+    /// Count of times flashblocks `transaction_by_block_number_and_index` is called.
+    #[metric(
+        describe = "Count of times flashblocks transaction_by_block_number_and_index is called"
+    )]
+    pub rpc_get_transaction_by_block_number_and_index: Counter,
+
     /// Time taken to clone bundle state.
     #[metric(describe = "Time taken to clone bundle state")]
     pub bundle_state_clone_duration: Histogram,

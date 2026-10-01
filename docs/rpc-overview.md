@@ -8,8 +8,8 @@ flashblocks producer, the `pending` block tag stops meaning "a block the node in
 mempool" and starts meaning "the pre-confirmed block the builder is currently assembling".
 
 > **Proofs are the one exception.** `eth_getProof`, `eth_getMultiProof` and `eth_getAccount` refuse
-> the `pending` tag, because pre-confirmed state has no state root to prove against. See
-> [`eth_getProof`](./ethereum-json-rpc-api/eth_getProof.md).
+> the `pending` tag while it is the flashblock being built, because pre-confirmed state has no
+> state root to prove against. See [`eth_getProof`](./ethereum-json-rpc-api/eth_getProof.md).
 
 ---
 
@@ -44,23 +44,26 @@ Two guarantees follow, and both are deliberate:
 2. **A sealed block always wins.** If the network has already produced the block, you are served
    that block rather than a reconstruction of it.
 
-The second guarantee has one visible effect on the methods marked **No** below. When the node has
-executed the next block for its consensus client but has not yet made it canonical, those methods
-answer `pending` from that executed block, not from the latest confirmed block. `eth_feeHistory` is
-the exception: it always uses the latest confirmed block. The three call-tracing methods use the
-executed block's state too, unless the flashblock being built reaches further ahead, in which case
-they use the flashblock state.
+The second guarantee has one visible effect. When the node has executed the next block for its
+consensus client but has not yet made it canonical, and that block is at least as new as the
+flashblock, the methods that read account state or execute calls answer `pending` from that
+executed block instead of from the flashblock. The three proof methods answer from it too, instead
+of refusing. `eth_getBlockByNumber`, `eth_getBlockTransactionCountByNumber`,
+`eth_getBlockReceipts`, `eth_getTransactionByBlockNumberAndIndex` and `eth_getLogs` keep describing
+the flashblock. `eth_feeHistory` always uses the latest confirmed block.
 
 Code and storage at `pending`, and balances the builder did not report, come from the node's own
-execution of the flashblock transactions on top of the latest confirmed block. That is the same
-execution `eth_call` at `pending` runs against, so the two agree.
+execution of the flashblock transactions on top of the latest confirmed block. `eth_call`,
+`eth_estimateGas`, `eth_simulateV1` and the call-tracing methods run on that same state, in the
+block environment of the flashblock being built, so they all agree.
 
 ---
 
 ## API reference
 
 > **Info.** **Yes** means `pending` reflects the flashblock being built. **No** means `pending`
-> returns the latest confirmed block. **Refused** means the call returns an error for `pending`.
+> returns the latest confirmed block. **Refused** means the call returns an error for `pending`
+> while `pending` is the flashblock being built.
 > **n/a** means the method takes no block parameter.
 
 ### Ethereum JSON-RPC API
@@ -80,22 +83,21 @@ Methods where this node does something you need to know about have their own pag
 | [`eth_getStorageAt`](./ethereum-json-rpc-api/eth_getStorageAt.md) | Contract storage slot | **Yes** |
 | `eth_getAccountInfo` | Account balance, nonce and code in one call | **Yes** |
 | `eth_getStorageValues` | Several storage slots in one call | **Yes** |
-| `ots_hasCode` | Whether an address holds code, in the `ots` namespace. Served only when `--http.api` includes `ots` | **Yes** |
 | [`eth_getProof`](./ethereum-json-rpc-api/eth_getProof.md) | Merkle proof of an account and its storage | **Refused** |
 | `eth_getMultiProof` | Merkle proofs of several accounts in one call | **Refused** |
 | `eth_getAccount` | Account with its storage root | **Refused** |
-| `eth_createAccessList` | Access list a transaction would need | **No** |
-| `debug_traceCall` | Trace a call | **No** |
-| `trace_call` | Trace a call, in the `trace` namespace | **No** |
+| `eth_createAccessList` | Access list a transaction would need | **Yes** |
+| `debug_traceCall` | Trace a call | **Yes** |
+| `trace_call`, `trace_callMany`, `trace_rawTransaction` | Trace calls, in the `trace` namespace | **Yes** |
 | [`eth_getBlockByNumber`](./ethereum-json-rpc-api/eth_getBlockByNumber.md) | Block by number or tag | **Yes** |
 | [`eth_getBlockTransactionCountByNumber`](./ethereum-json-rpc-api/eth_getBlockTransactionCountByNumber.md) | Transaction count of a block | **Yes** |
+| [`eth_getBlockReceipts`](./ethereum-json-rpc-api/eth_getBlockReceipts.md) | All receipts in a block | **Yes** |
+| [`eth_getTransactionByBlockNumberAndIndex`](./ethereum-json-rpc-api/eth_getTransactionByBlockNumberAndIndex.md) | Transaction by block and index | **Yes** |
 | [`eth_getLogs`](./ethereum-json-rpc-api/eth_getLogs.md) | Logs matching a filter, including pending flashblock logs | **Yes** |
 | [`eth_getTransactionByHash`](./ethereum-json-rpc-api/eth_getTransactionByHash.md) | Transaction by hash. Pre-confirmed included, unless this node's mempool holds it | **Yes** |
 | [`eth_getTransactionReceipt`](./ethereum-json-rpc-api/eth_getTransactionReceipt.md) | Receipt by hash, pre-confirmed included | **Yes** |
 | [`eth_sendRawTransaction`](./ethereum-json-rpc-api/eth_sendRawTransaction.md) | Submit a signed transaction | n/a |
 | [`eth_sendRawTransactionSync`](./flashblocks-api/eth_sendRawTransactionSync.md) | Submit and wait for flashblock inclusion | n/a |
-| [`eth_getBlockReceipts`](./ethereum-json-rpc-api/eth_getBlockReceipts.md) | All receipts in a block | **No** |
-| [`eth_getTransactionByBlockNumberAndIndex`](./ethereum-json-rpc-api/eth_getTransactionByBlockNumberAndIndex.md) | Transaction by block and index | **No** |
 | [`eth_getBlockByHash`](./ethereum-json-rpc-api/eth_getBlockByHash.md) | Block by hash | n/a |
 | `eth_getBlockTransactionCountByHash` | Transaction count by block hash | n/a |
 | `eth_getTransactionByBlockHashAndIndex` | Transaction by block hash and index | n/a |

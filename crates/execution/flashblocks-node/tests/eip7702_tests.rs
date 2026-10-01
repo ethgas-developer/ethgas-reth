@@ -137,6 +137,14 @@ fn create_base_flashblock(setup: &TestSetup) -> FlashBlock {
     }
 }
 
+/// Asserts that `account` delegates to `target` at `pending`: its code is the EIP-7702 designator.
+async fn assert_delegates(setup: &TestSetup, account: Account, target: Address) -> Result<()> {
+    let code = setup.harness.provider().get_code_at(account.address()).pending().await?;
+    let designator: Bytes = [&[0xef, 0x01, 0x00][..], target.as_slice()].concat().into();
+    assert_eq!(code, designator, "the authorization must delegate");
+    Ok(())
+}
+
 /// A non-base flashblock carrying `(encoded_tx, tx_hash, cumulative_gas)` entries.
 fn delta_flashblock(index: u64, txs: Vec<(Bytes, TxHash, u64)>) -> FlashBlock {
     let mut receipts = HashMap::default();
@@ -170,7 +178,7 @@ async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
 
     setup.harness.send_flashblock(create_base_flashblock(&setup)).await?;
 
-    let auth = build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
+    let auth = build_authorization(chain_id, setup.account_contract_address, 1, Account::Alice);
     let increment = Minimal7702Account::incrementCall {};
     let tx = build_eip7702_tx(
         chain_id,
@@ -190,6 +198,14 @@ async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
 
     let pending = setup.harness.provider().get_transaction_by_hash(tx_hash).await?;
     assert!(pending.is_some(), "EIP-7702 transaction should be in pending state");
+    assert_delegates(&setup, Account::Alice, setup.account_contract_address).await?;
+    let counter = setup
+        .harness
+        .provider()
+        .get_storage_at(Account::Alice.address(), U256::ZERO)
+        .pending()
+        .await?;
+    assert_eq!(counter, U256::from(1), "increment() runs in the delegating account's storage");
 
     Ok(())
 }
@@ -203,7 +219,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
 
     let increment = Minimal7702Account::incrementCall {};
     let auth_alice =
-        build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
+        build_authorization(chain_id, setup.account_contract_address, 1, Account::Alice);
     let tx_alice = build_eip7702_tx(
         chain_id,
         0,
@@ -213,7 +229,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
         vec![auth_alice],
         Account::Alice,
     );
-    let auth_bob = build_authorization(chain_id, setup.account_contract_address, 0, Account::Bob);
+    let auth_bob = build_authorization(chain_id, setup.account_contract_address, 1, Account::Bob);
     let tx_bob = build_eip7702_tx(
         chain_id,
         0,
@@ -246,6 +262,8 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
         provider.get_transaction_by_hash(hash_bob).await?.is_some(),
         "Bob's EIP-7702 tx should be pending"
     );
+    assert_delegates(&setup, Account::Alice, setup.account_contract_address).await?;
+    assert_delegates(&setup, Account::Bob, setup.account_contract_address).await?;
 
     Ok(())
 }
@@ -257,7 +275,7 @@ async fn test_eip7702_pending_receipt() -> Result<()> {
 
     setup.harness.send_flashblock(create_base_flashblock(&setup)).await?;
 
-    let auth = build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
+    let auth = build_authorization(chain_id, setup.account_contract_address, 1, Account::Alice);
     let increment = Minimal7702Account::incrementCall {};
     let tx = build_eip7702_tx(
         chain_id,
@@ -278,6 +296,7 @@ async fn test_eip7702_pending_receipt() -> Result<()> {
     let receipt = setup.harness.provider().get_transaction_receipt(tx_hash).await?;
     assert!(receipt.is_some(), "EIP-7702 receipt should be available in pending state");
     assert!(receipt.unwrap().status(), "EIP-7702 transaction should have succeeded");
+    assert_delegates(&setup, Account::Alice, setup.account_contract_address).await?;
 
     Ok(())
 }
@@ -290,7 +309,7 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
     setup.harness.send_flashblock(create_base_flashblock(&setup)).await?;
 
     // Flashblock 1: delegation only (empty input just sets up the delegation).
-    let auth = build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
+    let auth = build_authorization(chain_id, setup.account_contract_address, 1, Account::Alice);
     let delegation_tx = build_eip7702_tx(
         chain_id,
         0,
@@ -309,11 +328,14 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
         ))
         .await?;
 
-    // Flashblock 2: execute increment() through the now-delegated EOA (EIP-1559, nonce 1).
+    assert_delegates(&setup, Account::Alice, setup.account_contract_address).await?;
+
+    // Flashblock 2: execute increment() through the now-delegated EOA (EIP-1559). The delegation
+    // transaction and its authorization each raised Alice's nonce.
     let increment = Minimal7702Account::incrementCall {};
     let execution_tx = build_eip1559_tx(
         chain_id,
-        1,
+        2,
         Account::Alice.address(),
         U256::ZERO,
         Bytes::from(increment.abi_encode()),
@@ -337,6 +359,74 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
         provider.get_transaction_receipt(execution_hash).await?.is_some(),
         "execution tx receipt should exist"
     );
+    let counter = provider.get_storage_at(Account::Alice.address(), U256::ZERO).pending().await?;
+    assert_eq!(counter, U256::from(1), "increment() must run through the delegation");
+
+    Ok(())
+}
+
+/// A self-sponsored authorization raises the sender's nonce twice: once for the transaction, once
+/// for the authorization.
+#[tokio::test]
+async fn test_pending_nonce_counts_a_self_sponsored_authorization() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let chain_id = setup.harness.chain_id();
+    let provider = setup.harness.provider();
+    setup.harness.send_flashblock(create_base_flashblock(&setup)).await?;
+
+    let auth = build_authorization(chain_id, setup.account_contract_address, 1, Account::Alice);
+    let tx = build_eip7702_tx(
+        chain_id,
+        0,
+        Account::Alice.address(),
+        U256::ZERO,
+        Bytes::new(),
+        vec![auth],
+        Account::Alice,
+    );
+    let tx_hash = keccak256(&tx);
+    setup
+        .harness
+        .send_flashblock(delta_flashblock(1, vec![(tx, tx_hash, BASE_CUMULATIVE_GAS + 30_000)]))
+        .await?;
+    assert_delegates(&setup, Account::Alice, setup.account_contract_address).await?;
+
+    let alice = Account::Alice.address();
+    assert_eq!(provider.get_transaction_count(alice).pending().await?, 2);
+    assert_eq!(provider.get_account_info(alice).pending().await?.nonce, 2);
+
+    Ok(())
+}
+
+/// An authorization raises its signer's nonce although the signer sent nothing.
+#[tokio::test]
+async fn test_pending_nonce_counts_a_sponsored_authorization() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let chain_id = setup.harness.chain_id();
+    let provider = setup.harness.provider();
+    setup.harness.send_flashblock(create_base_flashblock(&setup)).await?;
+
+    let auth = build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
+    let tx = build_eip7702_tx(
+        chain_id,
+        0,
+        Account::Alice.address(),
+        U256::ZERO,
+        Bytes::new(),
+        vec![auth],
+        Account::Bob,
+    );
+    let tx_hash = keccak256(&tx);
+    setup
+        .harness
+        .send_flashblock(delta_flashblock(1, vec![(tx, tx_hash, BASE_CUMULATIVE_GAS + 30_000)]))
+        .await?;
+    assert_delegates(&setup, Account::Alice, setup.account_contract_address).await?;
+
+    let alice = Account::Alice.address();
+    assert_eq!(provider.get_transaction_count(alice).pending().await?, 1);
+    assert_eq!(provider.get_account_info(alice).pending().await?.nonce, 1);
+    assert_eq!(provider.get_transaction_count(Account::Bob.address()).pending().await?, 1);
 
     Ok(())
 }

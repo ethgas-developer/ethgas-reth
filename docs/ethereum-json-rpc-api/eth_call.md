@@ -53,9 +53,12 @@ Executes a message call immediately, without broadcasting a transaction. Nothing
 `pending` executes against the flashblock being built, so the call sees state left by
 pre-confirmed transactions the builder has already sequenced.
 
-Only the state is the flashblock's. The block environment is the latest confirmed block's:
-`block.number`, `block.timestamp` and the base fee are those of the block the flashblock builds on,
-not the flashblock's own.
+The block environment is the flashblock's own: `block.number`, `block.timestamp` and the base fee
+are those of the block being built. A state override applies on top of the flashblock's state, so
+overriding one field of an account keeps the account's other fields as the flashblock left them.
+
+Without flashblock data, `pending` is reth's own: the latest confirmed block's state in the
+environment of the block that would follow it.
 
 This node supports two extra parameters that the standard JSON-RPC shape does not require:
 `stateOverrides` and `blockOverrides`. Both are honoured at `pending`.

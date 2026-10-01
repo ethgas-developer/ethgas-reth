@@ -236,12 +236,18 @@ pub struct FlashblocksHarness {
 impl FlashblocksHarness {
     /// Launch a flashblocks-enabled harness with automatic canonical processing.
     pub async fn new() -> Result<Self> {
-        Self::with_options(true).await
+        Self::with_options(true, None).await
     }
 
     /// Launch the harness configured for manual canonical progression.
     pub async fn manual_canonical() -> Result<Self> {
-        Self::with_options(false).await
+        Self::with_options(false, None).await
+    }
+
+    /// Launch the harness with the HTTP and WS modules chosen as `--http.api` chooses them, for
+    /// example `"eth,net,web3,ots,debug,trace"`.
+    pub async fn with_rpc_modules(rpc_modules: &str) -> Result<Self> {
+        Self::with_options(true, Some(rpc_modules)).await
     }
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
@@ -254,7 +260,7 @@ impl FlashblocksHarness {
         self.parts.send(flashblock).await
     }
 
-    async fn with_options(process_canonical: bool) -> Result<Self> {
+    async fn with_options(process_canonical: bool, rpc_modules: Option<&str>) -> Result<Self> {
         init_silenced_tracing();
 
         // Build default chain spec programmatically
@@ -269,8 +275,13 @@ impl FlashblocksHarness {
             Arc::new(FlashblocksPendingState::new(parts_source.parts()?.state()));
 
         // Launch the node with the flashblocks extension
-        let node =
-            LocalNode::new(vec![Box::new(extension)], chain_spec, Some(pending_state)).await?;
+        let node = LocalNode::with_rpc_modules(
+            vec![Box::new(extension)],
+            chain_spec,
+            Some(pending_state),
+            rpc_modules,
+        )
+        .await?;
         let engine = node.engine_api()?;
 
         tokio::time::sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
@@ -347,23 +358,15 @@ impl FlashblocksBuilderTestHarness {
     /// Get the account state including pending flashblock state.
     pub fn account_state(&self, account: Account) -> RethAccount {
         let basic_account = self.canonical_account(account);
+        let pending = self.flashblocks.get_pending_blocks();
 
-        let nonce = self
-            .flashblocks
-            .get_pending_blocks()
-            .get_transaction_count(account.address())
-            .to::<u64>();
-        let balance = self
-            .flashblocks
-            .get_pending_blocks()
-            .get_balance(account.address())
-            .unwrap_or(basic_account.balance);
+        let nonce = pending
+            .as_ref()
+            .and_then(|pending| pending.bundle_state().account(&account.address())?.account_info())
+            .map_or(basic_account.nonce, |info| info.nonce);
+        let balance = pending.get_balance(account.address()).unwrap_or(basic_account.balance);
 
-        RethAccount {
-            nonce: nonce + basic_account.nonce,
-            balance,
-            bytecode_hash: basic_account.bytecode_hash,
-        }
+        RethAccount { nonce, balance, bytecode_hash: basic_account.bytecode_hash }
     }
 
     /// Build a transaction to send ETH from one account to another.

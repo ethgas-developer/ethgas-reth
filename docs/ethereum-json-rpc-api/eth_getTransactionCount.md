@@ -42,13 +42,14 @@ Returns the number of transactions sent from an address, that is, the next nonce
 
 ## Behaviour at `pending` on this node
 
-`pending` counts transactions the builder has already sequenced into flashblocks, so it is the
-nonce to use when submitting back-to-back transactions faster than the block time.
+`pending` returns the account's nonce after the transactions the builder has already sequenced
+into flashblocks, so it is the nonce to use when submitting back-to-back transactions faster than
+the block time.
 
 This differs from a typical node, where `pending` counts transactions sitting in the node's own
-mempool. Here it reflects what the builder actually sequenced.
+mempool. Here it reflects what the builder actually sequenced, and the mempool is never counted.
 
-The count covers transactions whose sender is the address. It misses two ways a nonce rises inside
-a flashblock without such a transaction: an EIP-7702 authorization the address signed, and a
-contract creation by a contract, which raises that contract's own nonce. `eth_getAccountInfo` at
-`pending` reports the executed nonce in both cases.
+The node executes the flashblock transactions and returns the executed nonce. So it also covers
+the two ways a nonce rises without a transaction from the address: an EIP-7702 authorization the
+address signed, and a contract creation by a contract, which raises that contract's own nonce. It
+always agrees with the nonce that `eth_getAccountInfo` returns at `pending`.

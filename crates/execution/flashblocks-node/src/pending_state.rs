@@ -41,7 +41,7 @@ impl PendingStateSource for FlashblocksPendingState {
 
         let overlay = PendingOverlay::from_bundle(
             anchor.clone(),
-            pending.latest_block_number(),
+            pending.latest_header(),
             (*pending.bundle_state()).clone(),
         );
         *cached = Some((Arc::clone(pending), overlay.clone()));

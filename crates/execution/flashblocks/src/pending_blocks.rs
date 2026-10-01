@@ -12,7 +12,7 @@ use alloy_primitives::{
 use alloy_provider::network::{TransactionResponse, primitives::BlockTransactions};
 use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt};
 use alloy_rpc_types_engine::PayloadId;
-use alloy_rpc_types_eth::{Header as RPCHeader, state::StateOverride};
+use alloy_rpc_types_eth::Header as RPCHeader;
 use arc_swap::Guard;
 use reth_revm::{db::BundleState, state::EvmState};
 use reth_rpc_convert::RpcTransaction;
@@ -59,15 +59,16 @@ pub struct PendingBlocksBuilder {
 
     transactions: Vec<Transaction>,
     account_balances: HashMap<Address, U256>,
-    transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, TransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
-    state_overrides: Option<StateOverride>,
 
     bundle_state: Arc<BundleState>,
     anchor: Option<Sealed<Header>>,
+
+    /// Returned by [`Self::build`] in place of the blocks.
+    deferred_error: Option<BuildError>,
 }
 
 impl Default for PendingBlocksBuilder {
@@ -84,14 +85,13 @@ impl PendingBlocksBuilder {
             headers: Vec::new(),
             transactions: Vec::new(),
             account_balances: HashMap::new(),
-            transaction_count: HashMap::new(),
             transaction_receipts: HashMap::new(),
             transactions_by_hash: HashMap::new(),
             transaction_state: HashMap::new(),
             transaction_senders: HashMap::new(),
-            state_overrides: None,
             bundle_state: Arc::new(BundleState::default()),
             anchor: None,
+            deferred_error: None,
         }
     }
 
@@ -110,9 +110,18 @@ impl PendingBlocksBuilder {
     }
 
     /// Stores a transaction in the builder.
+    ///
+    /// Each hash may be added once; a repeat makes [`Self::build`] fail with
+    /// [`BuildError::DuplicateTransaction`]. The processor reuses a cached transaction's state by
+    /// hash, so a repeat would skip execution and be listed twice.
     #[inline]
     pub fn with_transaction(&mut self, transaction: Transaction) -> &Self {
-        self.transactions_by_hash.insert(transaction.tx_hash(), transaction.clone());
+        let tx_hash = transaction.tx_hash();
+        if self.transactions_by_hash.contains_key(&tx_hash) {
+            self.deferred_error.get_or_insert(BuildError::DuplicateTransaction { tx_hash });
+            return self;
+        }
+        self.transactions_by_hash.insert(tx_hash, transaction.clone());
         self.transactions.push(transaction);
         self
     }
@@ -131,15 +140,6 @@ impl PendingBlocksBuilder {
         self
     }
 
-    /// Increments the pending nonce for an account.
-    #[inline]
-    pub fn increment_nonce(&mut self, sender: Address) -> &Self {
-        let zero = U256::from(0);
-        let current_count = self.transaction_count.get(&sender).unwrap_or(&zero);
-        _ = self.transaction_count.insert(sender, *current_count + U256::from(1));
-        self
-    }
-
     /// Stores the receipt for a transaction.
     #[inline]
     pub fn with_receipt(&mut self, hash: B256, receipt: TransactionReceipt) -> &Self {
@@ -151,13 +151,6 @@ impl PendingBlocksBuilder {
     #[inline]
     pub fn with_account_balance(&mut self, address: Address, balance: U256) -> &Self {
         self.account_balances.insert(address, balance);
-        self
-    }
-
-    /// Sets state overrides for the pending blocks.
-    #[inline]
-    pub fn with_state_overrides(&mut self, state_overrides: StateOverride) -> &Self {
-        self.state_overrides = Some(state_overrides);
         self
     }
 
@@ -177,6 +170,9 @@ impl PendingBlocksBuilder {
 
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
+        if let Some(err) = self.deferred_error {
+            return Err(err.into());
+        }
         let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
         let latest_header = self.headers.last().cloned().ok_or(BuildError::MissingHeaders)?;
 
@@ -190,12 +186,10 @@ impl PendingBlocksBuilder {
             flashblocks: self.flashblocks,
             transactions: self.transactions,
             account_balances: self.account_balances,
-            transaction_count: self.transaction_count,
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
             transaction_state: self.transaction_state,
             transaction_senders: self.transaction_senders,
-            state_overrides: self.state_overrides,
             bundle_state: self.bundle_state,
             anchor: self.anchor,
         })
@@ -212,12 +206,10 @@ pub struct PendingBlocks {
     transactions: Vec<Transaction>,
 
     account_balances: HashMap<Address, U256>,
-    transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, TransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
-    state_overrides: Option<StateOverride>,
 
     bundle_state: Arc<BundleState>,
     anchor: Option<Sealed<Header>>,
@@ -367,6 +359,18 @@ impl PendingBlocks {
         self.transaction_receipts.get(&tx_hash)
     }
 
+    /// Returns the receipts of the latest block, in block order.
+    pub fn get_latest_block_receipts(&self) -> Vec<TransactionReceipt> {
+        self.get_transactions_for_block(self.latest_header.number)
+            .filter_map(|tx| self.transaction_receipts.get(&tx.tx_hash()).cloned())
+            .collect()
+    }
+
+    /// Returns the latest block's transaction at `index`.
+    pub fn get_latest_block_transaction(&self, index: usize) -> Option<&Transaction> {
+        self.get_transactions_for_block(self.latest_header.number).nth(index)
+    }
+
     /// Returns a transaction by its hash.
     pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<&Transaction> {
         self.transactions_by_hash.get(&tx_hash)
@@ -377,19 +381,9 @@ impl PendingBlocks {
         self.transactions_by_hash.contains_key(tx_hash)
     }
 
-    /// Returns the transaction count for an address in pending state.
-    pub fn get_transaction_count(&self, address: Address) -> U256 {
-        self.transaction_count.get(&address).copied().unwrap_or_else(|| U256::from(0))
-    }
-
     /// Returns the balance for an address in pending state.
     pub fn get_balance(&self, address: Address) -> Option<U256> {
         self.account_balances.get(&address).copied()
-    }
-
-    /// Returns the state overrides for the pending state.
-    pub fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.state_overrides.clone()
     }
 
     /// Returns logs matching the filter from pending state.
@@ -534,10 +528,6 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
         self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
     }
 
-    fn get_transaction_count(&self, address: Address) -> U256 {
-        self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
-    }
-
     fn get_block(&self, full: bool) -> Option<RpcBlock<Ethereum>> {
         self.as_ref().map(|pb| pb.get_latest_block(full))
     }
@@ -549,16 +539,20 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
         self.as_ref().and_then(|pb| pb.get_receipt(tx_hash).cloned())
     }
 
+    fn get_block_receipts(&self) -> Option<Vec<RpcReceipt<Ethereum>>> {
+        self.as_ref().map(|pb| pb.get_latest_block_receipts())
+    }
+
+    fn get_transaction_by_index(&self, index: usize) -> Option<RpcTransaction<Ethereum>> {
+        self.as_ref().and_then(|pb| pb.get_latest_block_transaction(index).cloned())
+    }
+
     fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Ethereum>> {
         self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash).cloned())
     }
 
     fn get_balance(&self, address: Address) -> Option<U256> {
         self.as_ref().and_then(|pb| pb.get_balance(address))
-    }
-
-    fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.as_ref().map(|pb| pb.get_state_overrides()).unwrap_or_default()
     }
 
     fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
@@ -580,7 +574,10 @@ mod tests {
     use alloy_rpc_types_engine::PayloadId;
 
     use super::{PendingBlocks, PendingBlocksBuilder};
-    use crate::payload::{ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata};
+    use crate::{
+        error::{BuildError, StateProcessorError},
+        payload::{ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata},
+    };
 
     fn test_flashblock() -> FlashBlock {
         FlashBlock {
@@ -658,6 +655,22 @@ mod tests {
             to: None,
             contract_address: None,
         }
+    }
+
+    #[test]
+    fn build_rejects_a_duplicate_transaction() {
+        let hash = B256::with_last_byte(0xA1);
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(test_transaction_with_hash(hash));
+        builder.with_transaction(test_transaction_with_hash(hash));
+
+        let err = builder.build().expect_err("a repeated transaction must fail the build");
+        assert_eq!(
+            err,
+            StateProcessorError::Build(BuildError::DuplicateTransaction { tx_hash: hash })
+        );
     }
 
     fn receipt_with_log(tx_hash: B256, log_address: Address) -> TransactionReceipt {

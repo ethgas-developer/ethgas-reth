@@ -52,8 +52,8 @@ Estimates the gas a transaction would consume.
 ## Behaviour at `pending` on this node
 
 The estimate runs against the flashblock being built, so it accounts for state changed by
-pre-confirmed transactions. It runs in the latest confirmed block's environment: `block.number`,
-`block.timestamp` and the base fee are those of the block the flashblock builds on.
+pre-confirmed transactions. It runs in the flashblock's own block environment: `block.number`,
+`block.timestamp` and the base fee are those of the block being built.
 
 ## Errors
 

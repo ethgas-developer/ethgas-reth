@@ -57,6 +57,7 @@ rand.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
+reth-node-metrics.workspace = true
 reth-db.workspace = true
 reth-revm.workspace = true
 reth-evm.workspace = true

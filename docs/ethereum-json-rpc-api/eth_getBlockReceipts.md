@@ -4,7 +4,7 @@ Returns every transaction receipt in a block.
 
 | | |
 |---|---|
-| Flashblocks `pending` | **No** — `pending` returns the latest confirmed block |
+| Flashblocks `pending` | **Yes** — `pending` returns the receipts of the flashblock being built |
 
 ## Parameters
 
@@ -53,14 +53,11 @@ Array of receipt objects, each in the shape `eth_getTransactionReceipt` returns.
 
 ## Behaviour at `pending` on this node
 
-**Not flashblocks-aware.** `pending` returns the latest confirmed block.
+`pending` returns the receipts of the flashblock being built, in block order. They are the
+receipts that `eth_getTransactionReceipt` returns for each transaction, and they list the
+transactions that `eth_getBlockByNumber("pending")` lists, in the same order.
 
-This produces two visible inconsistencies, both known:
+A pre-confirmed receipt carries `blockHash: 0x000…0`, because the block has no hash yet. It is not
+proof of inclusion; see [`eth_getTransactionReceipt`](./eth_getTransactionReceipt.md).
 
-- `eth_getBlockByNumber("pending")` returns the flashblock being built, but
-  `eth_getBlockReceipts("pending")` does not return that block's receipts.
-- `eth_getTransactionReceipt` can return a pre-confirmed receipt for a transaction that
-  `eth_getBlockReceipts("pending")` does not list.
-
-To read pre-confirmed receipts, call `eth_getTransactionReceipt` per hash, or subscribe to
-`newFlashblockTransactions`.
+Without flashblock data, `pending` returns the receipts of the latest confirmed block.

@@ -5,12 +5,13 @@
 
 use std::{future::Future, sync::Arc};
 
+use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::WithEncoded};
 use alloy_network::Ethereum;
 use alloy_primitives::{B256, U256};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_ethereum_primitives::EthPrimitives;
-use reth_evm::ConfigureEvm;
+use reth_evm::{ConfigureEvm, EvmEnvFor};
 use reth_node_api::{FullNodeComponents, HeaderTy, NodeTypes, PrimitivesTy};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_provider::{
@@ -36,7 +37,7 @@ use reth_rpc_eth_types::{
 };
 use reth_tasks::pool::{BlockingTaskGuard, BlockingTaskPool};
 
-use crate::pending_state::PendingStateSource;
+use crate::pending_state::{PendingOverlay, PendingStateSource};
 use reth_transaction_pool::{PoolTx, TransactionOrigin};
 
 /// The node's `eth` API.
@@ -59,10 +60,6 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> EthgasEthApi<N, Rpc> {
         pending_state: Option<Arc<dyn PendingStateSource<N::Primitives>>>,
     ) -> Self {
         Self { inner, pending_state }
-    }
-
-    fn serves_pending_overlay(&self) -> bool {
-        self.pending_state.as_ref().is_some_and(|source| source.pending_overlay().is_some())
     }
 
     /// Returns the wrapped reth [`EthApi`].
@@ -119,6 +116,37 @@ where
     #[inline]
     fn provider(&self) -> &Self::Provider {
         self.inner.provider()
+    }
+}
+
+impl<N, Rpc> EthgasEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    Rpc: RpcConvert<Primitives = N::Primitives>,
+{
+    /// The overlay that `pending` resolves to, or `None` when it resolves through the provider.
+    ///
+    /// An executed engine block at least as new as the snapshot is the better answer: it holds
+    /// the transactions that sealed and the withdrawals the bundle omits. And the bundle is only
+    /// coherent on the exact block it was executed against; the overlay resolves that block
+    /// lazily, on its first read, so the check is here, where `None` still falls back.
+    fn served_overlay(&self) -> Result<Option<PendingOverlay<N::Primitives>>, EthApiError> {
+        let Some(overlay) = self.pending_state.as_ref().and_then(|source| source.pending_overlay())
+        else {
+            return Ok(None);
+        };
+
+        if let Ok(Some(engine_pending)) = self.provider().pending_block_num_hash() &&
+            engine_pending.number >= overlay.latest_header.number()
+        {
+            return Ok(None);
+        }
+
+        if self.provider().block_number(overlay.anchor.hash())?.is_none() {
+            return Ok(None);
+        }
+
+        Ok(Some(overlay))
     }
 }
 
@@ -195,6 +223,27 @@ where
     Rpc: RpcConvert<Primitives = N::Primitives, Error = EthApiError, Evm = N::Evm>,
     EthApiError: FromEvmError<N::Evm>,
 {
+    /// Runs `pending` in the pending block's environment, on the overlay.
+    ///
+    /// reth pairs a derived pending environment with the latest block's state id, which never
+    /// reaches `local_pending_state`. With an overlay to serve, the pair is the snapshot's latest
+    /// header and the `pending` tag, so `eth_call`, `eth_estimateGas` and the call-tracing
+    /// methods execute on the state that header describes. Without one, reth's own pairing
+    /// applies: the engine's block, or the latest block with a derived environment.
+    async fn evm_env_at(&self, at: BlockId) -> Result<(EvmEnvFor<Self::Evm>, BlockId), Self::Error>
+    where
+        Self: SpawnBlocking,
+    {
+        let api_err = |err: EthApiError| -> Self::Error { err.into() };
+        if at.is_pending() &&
+            let Some(overlay) = self.served_overlay().map_err(api_err)?
+        {
+            let evm_env = self.inner.evm_env_for_header(&overlay.latest_header).map_err(api_err)?;
+            return Ok((evm_env, BlockId::pending()));
+        }
+
+        self.inner.evm_env_at(at).await.map_err(api_err)
+    }
 }
 
 impl<N, Rpc> EthState for EthgasEthApi<N, Rpc>
@@ -211,13 +260,14 @@ where
     /// Refuses `pending` while an overlay is served.
     ///
     /// `eth_getProof`, `eth_getMultiProof` and `eth_getAccount` are the only callers. The overlay
-    /// has no trie data, so a proof over it would be well-formed and match no block. Without an
-    /// overlay, `pending` resolves to a real executed block and reth's own check applies.
+    /// has no trie data, so a proof over it would be well-formed and match no block. When no
+    /// overlay is served, `pending` resolves through the provider and reth's own check applies.
     fn ensure_within_proof_window(&self, block_id: BlockId) -> Result<(), Self::Error>
     where
         Self: EthApiSpec,
     {
-        if block_id.is_pending() && self.serves_pending_overlay() {
+        let api_err = |err: EthApiError| -> Self::Error { err.into() };
+        if block_id.is_pending() && self.served_overlay().map_err(api_err)?.is_some() {
             return Err(EthApiError::InvalidParams(
                 "pending is not supported by this method: pending state is built from \
                  flashblocks and carries no state root, so no proof can be derived from it"
@@ -367,32 +417,16 @@ where
     where
         Self: SpawnBlocking,
     {
-        let Some(overlay) = self.pending_state.as_ref().and_then(|source| source.pending_overlay())
-        else {
+        let Some(overlay) = self.served_overlay()? else {
             return Ok(None);
         };
-
-        // An executed engine block at least as new as the snapshot is the better answer: it holds
-        // the transactions that sealed and the withdrawals the bundle omits.
-        if let Ok(Some(engine_pending)) = self.provider().pending_block_num_hash() &&
-            engine_pending.number >= overlay.latest_block_number
-        {
-            return Ok(None);
-        }
-
-        // The bundle is only coherent on the exact block it was executed against. The overlay
-        // resolves that block lazily, on its first read, so check it here: without it, `Ok(None)`
-        // falls back instead of every read failing.
-        let provider_err =
-            |err| -> Self::Error { <EthApiError as From<ProviderError>>::from(err).into() };
-        if self.provider().block_number(overlay.anchor.hash()).map_err(provider_err)?.is_none() {
-            return Ok(None);
-        }
 
         let state = self
             .provider()
             .state_with_block_appended(overlay.anchor.hash(), overlay.executed)
-            .map_err(provider_err)?;
+            .map_err(|err| -> Self::Error {
+                <EthApiError as From<ProviderError>>::from(err).into()
+            })?;
 
         Ok(Some(state))
     }

@@ -4,7 +4,7 @@ Returns the Merkle proof of an account and of a set of its storage slots, as def
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Refused** — `pending` returns an error. `eth_getMultiProof` and `eth_getAccount` follow the same rule |
+| Flashblocks `pending` | **Refused** — `pending` returns an error while it is the flashblock being built. `eth_getMultiProof` and `eth_getAccount` follow the same rule |
 
 ## Parameters
 
@@ -55,6 +55,10 @@ against no block on any chain. The node refuses the request instead of answering
 
 `eth_getMultiProof` and `eth_getAccount` need the same state root, so they refuse `pending` in the
 same way.
+
+The refusal holds only while `pending` is the flashblock being built. When the node has executed
+the next block for its consensus client, and that block is at least as new as the flashblock,
+`pending` is that executed block. It has a state root, so the three methods answer from it.
 
 A node that is not connected to a flashblocks producer has no pre-confirmed state, and answers
 `pending` for these three methods as any reth node does.

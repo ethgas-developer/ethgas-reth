@@ -4,7 +4,7 @@ Returns the transaction at a given index within the block with the given number 
 
 | | |
 |---|---|
-| Flashblocks `pending` | **No** — `pending` returns the latest confirmed block |
+| Flashblocks `pending` | **Yes** — `pending` returns a transaction of the flashblock being built |
 
 ## Parameters
 
@@ -57,10 +57,10 @@ Returns the transaction at a given index within the block with the given number 
 
 ## Behaviour at `pending` on this node
 
-`pending` returns the latest confirmed block, so this method does not return pre-confirmed
-transactions.
+`pending` returns the transaction at that index in the flashblock being built: the transaction
+that `eth_getBlockByNumber("pending", true)` lists at that index. Every index below the count that
+`eth_getBlockTransactionCountByNumber("pending")` reports is retrievable.
 
-This disagrees with `eth_getBlockTransactionCountByNumber`, which reports the flashblock count `N`
-at `pending`. Indices `0..N-1` are therefore not all retrievable here. The
-mismatch is known. Use `eth_getBlockByNumber("pending", true)` to read the pending transaction
-list.
+A pre-confirmed transaction has `blockHash: null` and a real `blockNumber` and `transactionIndex`.
+
+Without flashblock data, `pending` returns the latest confirmed block.

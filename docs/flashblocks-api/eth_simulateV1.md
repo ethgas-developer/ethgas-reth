@@ -98,7 +98,9 @@ per call, with `status`, `gasUsed`, `returnData`, `logs`, and `error` where the 
 ## Behaviour at `pending` on this node
 
 Simulation runs against the flashblock being built, so it sees state left by transactions the
-builder has already sequenced but that are not yet in a sealed block.
+builder has already sequenced but that are not yet in a sealed block. The simulated blocks are
+numbered from the latest confirmed block, and each one starts from the state the previous one
+left, on top of the flashblock's state.
 
 Nothing is submitted and no state is persisted. To submit and wait for pre-confirmation instead,
 use [`eth_sendRawTransactionSync`](./eth_sendRawTransactionSync.md).

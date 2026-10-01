@@ -33,10 +33,22 @@ use crate::{
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = EthProvider;
 
+/// Options for a [`LocalNode`] beyond the defaults.
+#[derive(Debug, Default, Clone)]
+pub struct LocalNodeOptions {
+    /// The HTTP and WS modules, as `--http.api` chooses them: a comma-separated list such as
+    /// `"eth,net,web3,ots"`. `None` keeps reth's standard set.
+    pub rpc_modules: Option<String>,
+    /// `--engine.persistence-threshold`: how many canonical blocks stay in memory before the
+    /// engine persists them. `None` keeps reth's default.
+    pub persistence_threshold: Option<u64>,
+}
+
 /// Handle to a launched local node along with the resources required to keep it alive.
 pub struct LocalNode {
     pub(crate) http_api_addr: SocketAddr,
     engine_ipc_path: String,
+    ipc_path: Option<String>,
     pub(crate) ws_api_addr: SocketAddr,
     provider: LocalNodeProvider,
     network: Arc<dyn NetworkSyncUpdater>,
@@ -80,6 +92,18 @@ impl LocalNode {
         pending_state: Option<Arc<dyn PendingStateSource>>,
         rpc_modules: Option<&str>,
     ) -> Result<Self> {
+        let options =
+            LocalNodeOptions { rpc_modules: rpc_modules.map(str::to_owned), ..Default::default() };
+        Self::with_options(extensions, chain_spec, pending_state, options).await
+    }
+
+    /// Like [`Self::new`], with [`LocalNodeOptions`].
+    pub async fn with_options(
+        extensions: Vec<Box<dyn EthgasNodeExtension>>,
+        chain_spec: Arc<ChainSpec>,
+        pending_state: Option<Arc<dyn PendingStateSource>>,
+        options: LocalNodeOptions,
+    ) -> Result<Self> {
         let exec = reth_tasks::Runtime::test();
 
         let network_config = NetworkArgs {
@@ -96,7 +120,7 @@ impl LocalNode {
 
         let mut rpc_args =
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
-        if let Some(modules) = rpc_modules {
+        if let Some(modules) = options.rpc_modules.as_deref() {
             let selection = modules
                 .parse()
                 .ok()
@@ -120,6 +144,9 @@ impl LocalNode {
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
+        if let Some(persistence_threshold) = options.persistence_threshold {
+            node_config.engine.persistence_threshold = persistence_threshold;
+        }
 
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
@@ -154,6 +181,7 @@ impl LocalNode {
             .ok_or_else(|| eyre::eyre!("Failed to get websocket api address"))?;
 
         let engine_ipc_path = node_config.rpc.auth_ipc_path;
+        let ipc_path = node_handle.rpc_server_handle().ipc_endpoint();
         let provider = node_handle.provider().clone();
         let network = Arc::new(node_handle.network.clone());
 
@@ -161,6 +189,7 @@ impl LocalNode {
             http_api_addr,
             ws_api_addr,
             engine_ipc_path,
+            ipc_path,
             provider,
             network,
             _node_exit_future: node_exit_future,
@@ -203,5 +232,10 @@ impl LocalNode {
     /// Websocket URL for the local node.
     pub fn ws_url(&self) -> String {
         format!("ws://{}", self.ws_api_addr)
+    }
+
+    /// Path of the IPC endpoint, which serves every enabled module.
+    pub fn ipc_path(&self) -> Option<&str> {
+        self.ipc_path.as_deref()
     }
 }

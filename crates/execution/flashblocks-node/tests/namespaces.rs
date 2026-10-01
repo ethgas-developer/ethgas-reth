@@ -1,5 +1,6 @@
-//! The `pending` tag on methods outside the default `eth,net,web3` modules: `ots_hasCode` reads
-//! the overlay, and the call-tracing methods read canonical state.
+//! The `pending` tag on methods outside the default `eth,net,web3` modules: `ots_hasCode` and the
+//! call-tracing methods read the overlay; the block-replaying methods and `eth_callBundle` read
+//! canonical state.
 
 use DoubleCounter::DoubleCounterInstance;
 use alloy_consensus::TxType;
@@ -34,6 +35,11 @@ impl Setup {
 
     /// The base flashblock of block 1, which deploys the counter.
     fn deployment_payload(&self) -> FlashBlock {
+        self.deployment_payload_for(1)
+    }
+
+    /// The base flashblock of block `number`, which deploys the counter.
+    fn deployment_payload_for(&self, number: u64) -> FlashBlock {
         let mut receipts = HashMap::default();
         receipts.insert(
             keccak256(&self.deployment_tx),
@@ -52,7 +58,7 @@ impl Setup {
                 parent_hash: B256::ZERO,
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::ZERO,
-                block_number: 1,
+                block_number: number,
                 gas_limit: 30_000_000,
                 timestamp: 0,
                 extra_data: Bytes::new(),
@@ -63,7 +69,7 @@ impl Setup {
                 ..Default::default()
             },
             metadata: Metadata {
-                block_number: 1,
+                block_number: number,
                 receipts,
                 new_account_balances: HashMap::default(),
                 inclusion_fee: None,
@@ -132,6 +138,61 @@ async fn call_tracing_at_pending_reads_the_snapshot_not_the_pool() -> Result<()>
         }),
         "eth_createAccessList must list the counter's storage: {entries:?}"
     );
+
+    Ok(())
+}
+
+/// `trace_callMany` and `trace_rawTransaction` take their state id from `evm_env_at`, so at
+/// `pending` they run on the overlay as `trace_call` does.
+#[tokio::test]
+async fn trace_call_many_and_raw_transaction_at_pending_read_the_snapshot() -> Result<()> {
+    let setup = Setup::new().await?;
+    let client = setup.harness.rpc_client()?;
+    setup.harness.send_flashblock(setup.deployment_payload()).await?;
+    let one = U256::from(1);
+
+    let traces: Value = client
+        .request("trace_callMany", (vec![(setup.count1(), vec!["trace"])], "pending"))
+        .await?;
+    let output: Bytes = traces[0]["output"].as_str().expect("output").parse()?;
+    assert_eq!(U256::from_be_slice(&output), one, "trace_callMany must see the counter");
+
+    let (raw, _) = Account::Alice.sign_txn_request(setup.count1().nonce(0))?;
+    let trace: Value =
+        client.request("trace_rawTransaction", (raw, vec!["trace"], "pending")).await?;
+    let output: Bytes = trace["output"].as_str().expect("output").parse()?;
+    assert_eq!(U256::from_be_slice(&output), one, "trace_rawTransaction must see the counter");
+
+    Ok(())
+}
+
+/// `eth_callMany` and `debug_traceCallMany` replay the block that `pending` resolves to, the
+/// canonical tip, on its parent's state, and `eth_callBundle` takes reth's own pending
+/// environment over the latest block's state. None of the three reaches the overlay.
+#[tokio::test]
+async fn block_replaying_methods_and_call_bundle_at_pending_read_canonical_state() -> Result<()> {
+    let setup = Setup::new().await?;
+    let client = setup.harness.rpc_client()?;
+    // A tip with a parent, since the replay starts from the parent's state.
+    setup.harness.advance_chain(1).await?;
+    setup.harness.send_flashblock(setup.deployment_payload_for(2)).await?;
+    let count1: Bytes = client.request("eth_call", (setup.count1(), "pending")).await?;
+    assert_eq!(U256::from_be_slice(&count1), U256::from(1), "the snapshot is served");
+
+    let bundles = vec![json!({ "transactions": [setup.count1()] })];
+    let context = json!({ "blockNumber": "pending" });
+    let results: Value = client.request("eth_callMany", (bundles.clone(), context.clone())).await?;
+    assert_eq!(results[0][0]["value"], json!("0x"), "eth_callMany reads canonical state");
+
+    let traces: Value =
+        client.request("debug_traceCallMany", (bundles, context, json!({}))).await?;
+    let returned = traces[0][0]["returnValue"].as_str().expect("returnValue");
+    assert!(returned.trim_start_matches("0x").is_empty(), "debug_traceCallMany: {traces}");
+
+    let (raw, _) = Account::Alice.sign_txn_request(setup.count1().nonce(0))?;
+    let bundle = json!({ "txs": [raw], "blockNumber": "0x2", "stateBlockNumber": "pending" });
+    let response: Value = client.request("eth_callBundle", (bundle,)).await?;
+    assert_eq!(response["results"][0]["value"], json!("0x"), "eth_callBundle: {response}");
 
     Ok(())
 }

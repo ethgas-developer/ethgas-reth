@@ -23,8 +23,9 @@ use alloy_rpc_types_eth::{
 };
 use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
 use ethgas_node_runner::test_utils::{Account, BLOCK_TIME_SECONDS, DoubleCounter};
-use ethgas_reth_flashblocks::payload::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
+use ethgas_reth_flashblocks::{
+    FlashblocksAPI,
+    payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata},
 };
 use eyre::Result;
 use futures_util::{SinkExt, StreamExt};
@@ -1935,6 +1936,66 @@ async fn test_eth_simulate_v1_pending_carries_state_from_block_to_block() -> Res
         bytes!("0x0000000000000000000000000000000000000000000000000000000000000003"),
         "block 2 must see block 1's increment on the flashblock's count of 2"
     );
+
+    Ok(())
+}
+
+/// Without a snapshot, `pending` is the block the engine has executed but not yet made canonical,
+/// for the block-shaped methods as for the state methods. Once forkchoice makes that block
+/// canonical, `pending` is the latest block again: the same block.
+#[tokio::test]
+#[ignore = "waits on the owner's decision: without a snapshot the block methods still answer latest"]
+async fn test_pending_without_a_snapshot_describes_the_engine_block() -> Result<()> {
+    let setup = TestSetup::manual_canonical().await?;
+    let provider = setup.harness.provider();
+    let client = setup.harness.rpc_client()?;
+    let deployer = Account::Deployer;
+
+    // The constructor emits LOG0, then returns runtime code that returns 42. Both the log and
+    // the contract exist only in the engine's executed block.
+    let (deployment_tx, contract, deployment_hash) = deployer.create_deployment_tx(
+        bytes!("0x60006000a0600a6011600039600a6000f3602a60005260206000f3"),
+        0,
+    )?;
+    let genesis_hash = setup.harness.latest_block().hash();
+    let engine_block = setup.harness.submit_block_from_transactions(vec![deployment_tx]).await?;
+    assert!(setup.harness.flashblocks_state().get_pending_blocks().is_none());
+    assert_eq!(provider.get_block_number().await?, 0, "the block must not be canonical");
+
+    let block = provider.get_block_by_number(BlockNumberOrTag::Pending).await?.expect("pending");
+    assert_eq!(block.header.hash, engine_block);
+    let count: Option<U256> =
+        client.request("eth_getBlockTransactionCountByNumber", ("pending",)).await?;
+    assert_eq!(count, Some(U256::from(1)));
+    let receipts = provider.get_block_receipts(BlockId::pending()).await?.expect("receipts");
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].block_hash, Some(engine_block));
+    assert_eq!(receipts[0].contract_address, Some(contract));
+    let by_index = provider
+        .get_transaction_by_block_number_and_index(BlockNumberOrTag::Pending, 0)
+        .await?
+        .expect("index 0");
+    assert_eq!(by_index.tx_hash(), deployment_hash);
+    assert_eq!(by_index.block_hash, Some(engine_block));
+    let logs = provider.get_logs(&Filter::default().select(BlockNumberOrTag::Pending)).await?;
+    assert_eq!(logs.len(), 1, "the creation log exists only in the engine block");
+    assert_eq!(logs[0].address(), contract);
+    assert_eq!(logs[0].block_hash, Some(engine_block));
+
+    // The state methods describe the same block.
+    let output: Bytes =
+        client.request("eth_call", (TransactionRequest::default().to(contract), "pending")).await?;
+    assert_eq!(U256::from_be_slice(&output), U256::from(42));
+    assert_eq!(provider.get_transaction_count(deployer.address()).pending().await?, 1);
+    let latest = provider.get_block_by_number(BlockNumberOrTag::Latest).await?.expect("latest");
+    assert_eq!(latest.header.hash, genesis_hash);
+
+    setup.harness.engine().update_forkchoice(genesis_hash, engine_block, None).await?;
+    assert_eq!(provider.get_block_number().await?, 1);
+    let block = provider.get_block_by_number(BlockNumberOrTag::Pending).await?.expect("pending");
+    assert_eq!(block.header.hash, engine_block);
+    let logs = provider.get_logs(&Filter::default().select(BlockNumberOrTag::Pending)).await?;
+    assert_eq!(logs.len(), 1);
 
     Ok(())
 }

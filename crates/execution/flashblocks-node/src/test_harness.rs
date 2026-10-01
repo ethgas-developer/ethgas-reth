@@ -23,8 +23,8 @@ use derive_more::Deref;
 use ethgas_node_runner::{
     EthgasNodeExtension, NodeHooks, PendingStateSource,
     test_utils::{
-        Account, LocalNode, LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness,
-        build_test_genesis, init_silenced_tracing,
+        Account, LocalNode, LocalNodeOptions, LocalNodeProvider, NODE_STARTUP_DELAY_MS,
+        TestHarness, build_test_genesis, init_silenced_tracing,
     },
 };
 use eyre::Result;
@@ -236,18 +236,32 @@ pub struct FlashblocksHarness {
 impl FlashblocksHarness {
     /// Launch a flashblocks-enabled harness with automatic canonical processing.
     pub async fn new() -> Result<Self> {
-        Self::with_options(true, None).await
+        Self::with_options(true, LocalNodeOptions::default()).await
     }
 
     /// Launch the harness configured for manual canonical progression.
     pub async fn manual_canonical() -> Result<Self> {
-        Self::with_options(false, None).await
+        Self::with_options(false, LocalNodeOptions::default()).await
     }
 
     /// Launch the harness with the HTTP and WS modules chosen as `--http.api` chooses them, for
     /// example `"eth,net,web3,ots,debug,trace"`.
     pub async fn with_rpc_modules(rpc_modules: &str) -> Result<Self> {
-        Self::with_options(true, Some(rpc_modules)).await
+        let options =
+            LocalNodeOptions { rpc_modules: Some(rpc_modules.to_owned()), ..Default::default() };
+        Self::with_options(true, options).await
+    }
+
+    /// Launch the harness for manual canonical progression with `--engine.persistence-threshold`
+    /// set, so a test can put the canonical tip in the database above a snapshot's anchor.
+    pub async fn manual_canonical_with_persistence_threshold(
+        persistence_threshold: u64,
+    ) -> Result<Self> {
+        let options = LocalNodeOptions {
+            persistence_threshold: Some(persistence_threshold),
+            ..Default::default()
+        };
+        Self::with_options(false, options).await
     }
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
@@ -260,7 +274,7 @@ impl FlashblocksHarness {
         self.parts.send(flashblock).await
     }
 
-    async fn with_options(process_canonical: bool, rpc_modules: Option<&str>) -> Result<Self> {
+    async fn with_options(process_canonical: bool, options: LocalNodeOptions) -> Result<Self> {
         init_silenced_tracing();
 
         // Build default chain spec programmatically
@@ -275,11 +289,11 @@ impl FlashblocksHarness {
             Arc::new(FlashblocksPendingState::new(parts_source.parts()?.state()));
 
         // Launch the node with the flashblocks extension
-        let node = LocalNode::with_rpc_modules(
+        let node = LocalNode::with_options(
             vec![Box::new(extension)],
             chain_spec,
             Some(pending_state),
-            rpc_modules,
+            options,
         )
         .await?;
         let engine = node.engine_api()?;
@@ -316,6 +330,19 @@ impl FlashblocksBuilderTestHarness {
         let node = FlashblocksHarness::manual_canonical()
             .await
             .expect("able to launch flashblocks harness");
+        Self::from_harness(node)
+    }
+
+    /// Like [`Self::new`], with `--engine.persistence-threshold` set.
+    pub async fn with_persistence_threshold(persistence_threshold: u64) -> Self {
+        let node =
+            FlashblocksHarness::manual_canonical_with_persistence_threshold(persistence_threshold)
+                .await
+                .expect("able to launch flashblocks harness");
+        Self::from_harness(node)
+    }
+
+    fn from_harness(node: FlashblocksHarness) -> Self {
         let provider = node.blockchain_provider();
         let flashblocks = node.flashblocks_state();
 

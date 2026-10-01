@@ -41,8 +41,5 @@ Returns the number of transactions in the block with the given number or tag.
 
 ## Behaviour at `pending` on this node
 
-`pending` returns the transaction count of the flashblock being built.
-
-**Mind the gap against `eth_getTransactionByBlockNumberAndIndex`.** That method answers `pending`
-from the latest confirmed block. The count you get here and the range of indices you can actually
-retrieve there do not agree at `pending`.
+`pending` returns the transaction count of the flashblock being built. Every index below it is
+retrievable with `eth_getTransactionByBlockNumberAndIndex("pending", index)`.

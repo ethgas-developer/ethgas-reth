@@ -23,8 +23,8 @@ use derive_more::Deref;
 use ethgas_node_runner::{
     EthgasNodeExtension, NodeHooks, PendingStateSource,
     test_utils::{
-        Account, LocalNode, LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness,
-        build_test_genesis, init_silenced_tracing,
+        Account, LocalNode, LocalNodeOptions, LocalNodeProvider, NODE_STARTUP_DELAY_MS,
+        TestHarness, build_test_genesis, init_silenced_tracing,
     },
 };
 use eyre::Result;
@@ -236,12 +236,42 @@ pub struct FlashblocksHarness {
 impl FlashblocksHarness {
     /// Launch a flashblocks-enabled harness with automatic canonical processing.
     pub async fn new() -> Result<Self> {
-        Self::with_options(true).await
+        Self::with_options(true, LocalNodeOptions::default()).await
     }
 
     /// Launch the harness configured for manual canonical progression.
     pub async fn manual_canonical() -> Result<Self> {
-        Self::with_options(false).await
+        Self::with_options(false, LocalNodeOptions::default()).await
+    }
+
+    /// Launch the harness with the HTTP and WS modules chosen as `--http.api` chooses them, for
+    /// example `"eth,net,web3,ots,debug,trace"`.
+    pub async fn with_rpc_modules(rpc_modules: &str) -> Result<Self> {
+        let options =
+            LocalNodeOptions { rpc_modules: Some(rpc_modules.to_owned()), ..Default::default() };
+        Self::with_options(true, options).await
+    }
+
+    /// Launch the harness for manual canonical progression with `--engine.persistence-threshold`
+    /// set, so a test can put the canonical tip in the database above a snapshot's anchor.
+    pub async fn manual_canonical_with_persistence_threshold(
+        persistence_threshold: u64,
+    ) -> Result<Self> {
+        let options = LocalNodeOptions {
+            persistence_threshold: Some(persistence_threshold),
+            ..Default::default()
+        };
+        Self::with_options(false, options).await
+    }
+
+    /// Launch the harness with `--rpc.send-raw-transaction-sync-timeout` set: the longest
+    /// `eth_sendRawTransactionSync` waits, which a requested timeout is clamped to.
+    pub async fn with_send_raw_transaction_sync_timeout(timeout: Duration) -> Result<Self> {
+        let options = LocalNodeOptions {
+            send_raw_transaction_sync_timeout: Some(timeout),
+            ..Default::default()
+        };
+        Self::with_options(true, options).await
     }
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
@@ -254,7 +284,7 @@ impl FlashblocksHarness {
         self.parts.send(flashblock).await
     }
 
-    async fn with_options(process_canonical: bool) -> Result<Self> {
+    async fn with_options(process_canonical: bool, options: LocalNodeOptions) -> Result<Self> {
         init_silenced_tracing();
 
         // Build default chain spec programmatically
@@ -269,8 +299,13 @@ impl FlashblocksHarness {
             Arc::new(FlashblocksPendingState::new(parts_source.parts()?.state()));
 
         // Launch the node with the flashblocks extension
-        let node =
-            LocalNode::new(vec![Box::new(extension)], chain_spec, Some(pending_state)).await?;
+        let node = LocalNode::with_options(
+            vec![Box::new(extension)],
+            chain_spec,
+            Some(pending_state),
+            options,
+        )
+        .await?;
         let engine = node.engine_api()?;
 
         tokio::time::sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
@@ -305,6 +340,19 @@ impl FlashblocksBuilderTestHarness {
         let node = FlashblocksHarness::manual_canonical()
             .await
             .expect("able to launch flashblocks harness");
+        Self::from_harness(node)
+    }
+
+    /// Like [`Self::new`], with `--engine.persistence-threshold` set.
+    pub async fn with_persistence_threshold(persistence_threshold: u64) -> Self {
+        let node =
+            FlashblocksHarness::manual_canonical_with_persistence_threshold(persistence_threshold)
+                .await
+                .expect("able to launch flashblocks harness");
+        Self::from_harness(node)
+    }
+
+    fn from_harness(node: FlashblocksHarness) -> Self {
         let provider = node.blockchain_provider();
         let flashblocks = node.flashblocks_state();
 
@@ -347,23 +395,15 @@ impl FlashblocksBuilderTestHarness {
     /// Get the account state including pending flashblock state.
     pub fn account_state(&self, account: Account) -> RethAccount {
         let basic_account = self.canonical_account(account);
+        let pending = self.flashblocks.get_pending_blocks();
 
-        let nonce = self
-            .flashblocks
-            .get_pending_blocks()
-            .get_transaction_count(account.address())
-            .to::<u64>();
-        let balance = self
-            .flashblocks
-            .get_pending_blocks()
-            .get_balance(account.address())
-            .unwrap_or(basic_account.balance);
+        let nonce = pending
+            .as_ref()
+            .and_then(|pending| pending.bundle_state().account(&account.address())?.account_info())
+            .map_or(basic_account.nonce, |info| info.nonce);
+        let balance = pending.get_balance(account.address()).unwrap_or(basic_account.balance);
 
-        RethAccount {
-            nonce: nonce + basic_account.nonce,
-            balance,
-            bytecode_hash: basic_account.bytecode_hash,
-        }
+        RethAccount { nonce, balance, bytecode_hash: basic_account.bytecode_hash }
     }
 
     /// Build a transaction to send ETH from one account to another.
@@ -525,7 +565,7 @@ impl<'a> FlashblockBuilder<'a> {
             self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
 
         let base = (self.index == 0).then(|| ExecutionPayloadBaseV1 {
-            parent_beacon_block_root: current_block.hash(),
+            parent_beacon_block_root: current_block.parent_beacon_block_root.unwrap_or_default(),
             parent_hash: current_block.hash(),
             fee_recipient: Address::random(),
             prev_randao: B256::random(),

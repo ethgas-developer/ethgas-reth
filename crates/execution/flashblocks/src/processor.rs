@@ -17,7 +17,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_hardforks::EthereumHardforks;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{B256, BlockNumber, map::foldhash::HashMap};
-use alloy_rpc_types::{TransactionTrait, state::StateOverride};
+use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::Log;
 use arc_swap::ArcSwapOption;
 use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
@@ -38,7 +38,7 @@ use tracing::{debug, error, warn};
 use crate::{
     block_assembler::BlockAssembler,
     cache::FlashblockCache,
-    error::{ProviderError, StateProcessorError},
+    error::{ProtocolError, ProviderError, StateProcessorError},
     metrics::Metrics,
     payload::FlashBlock,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
@@ -546,8 +546,12 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
-        let canonical_block = earliest_block_number - 1;
+        // Every build path filters its flashblocks first; an emptied list publishes nothing.
+        let Some((&earliest_block_number, _)) = flashblocks_per_block.first_key_value() else {
+            return Ok(None);
+        };
+        let canonical_block =
+            earliest_block_number.checked_sub(1).ok_or(ProtocolError::GenesisFlashblock)?;
         let mut last_block_header = self
             .client
             .header_by_number(canonical_block)
@@ -577,20 +581,15 @@ where
             None => State::builder().with_database(state_provider_db).with_bundle_update().build(),
         };
 
-        let mut state_overrides =
-            prev_pending_blocks.as_ref().map_or_else(StateOverride::default, |pending_blocks| {
-                pending_blocks.get_state_overrides().unwrap_or_default()
-            });
-
         let mut sender_recovery = Duration::ZERO;
 
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
                 .first()
-                .ok_or(crate::error::ProtocolError::EmptyFlashblocks)?
+                .ok_or(ProtocolError::EmptyFlashblocks)?
                 .base
                 .clone()
-                .ok_or(crate::error::ProtocolError::MissingBase)?;
+                .ok_or(ProtocolError::MissingBase)?;
 
             let receipt_by_hash = flashblocks
                 .iter()
@@ -666,7 +665,6 @@ where
                         sender
                     }
                 };
-                pending_blocks_builder.increment_nonce(sender);
                 pending_blocks_builder.with_transaction_sender(*transaction.tx_hash(), sender);
 
                 let receipt =
@@ -675,6 +673,14 @@ where
                             tx_hash: *transaction.tx_hash(),
                             sender,
                             reason: "missing receipt".to_string(),
+                        }
+                    })?;
+                let tx_gas_used =
+                    receipt.cumulative_gas_used().checked_sub(gas_used).ok_or_else(|| {
+                        crate::error::ExecutionError::TransactionFailed {
+                            tx_hash: *transaction.tx_hash(),
+                            sender,
+                            reason: "cumulative gas decreased".to_string(),
                         }
                     })?;
 
@@ -715,7 +721,7 @@ where
                     ConvertReceiptInput {
                         receipt: receipt.clone(),
                         tx: Recovered::new_unchecked(transaction, sender),
-                        gas_used: receipt.cumulative_gas_used() - gas_used,
+                        gas_used: tx_gas_used,
                         next_log_index,
                         meta,
                     };
@@ -774,24 +780,6 @@ where
                             sender,
                             reason: e.to_string(),
                         })?;
-                    for (addr, acc) in &state {
-                        let existing_override = state_overrides.entry(*addr).or_default();
-                        existing_override.balance = Some(acc.info.balance);
-                        existing_override.nonce = Some(acc.info.nonce);
-                        // `bytes()` returns revm's analysed bytecode, which is jump-table padded.
-                        // The override must carry the original deployed code.
-                        existing_override.code =
-                            acc.info.code.clone().map(|code| code.original_bytes());
-
-                        let existing =
-                            existing_override.state_diff.get_or_insert_with(Default::default);
-                        let changed_slots = acc
-                            .storage
-                            .iter()
-                            .map(|(&key, slot)| (B256::from(key), B256::from(slot.present_value)));
-
-                        existing.extend(changed_slots);
-                    }
                     pending_blocks_builder
                         .with_transaction_state(*transaction.tx_hash(), state.clone());
                     evm.db_mut().commit(state);
@@ -812,7 +800,51 @@ where
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_anchor(anchor);
-        pending_blocks_builder.with_state_overrides(state_overrides);
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicU64;
+
+    use reth_chainspec::MAINNET;
+    use reth_provider::test_utils::MockEthProvider;
+    use tokio::sync::{broadcast, mpsc};
+
+    use super::*;
+    use crate::payload::{ExecutionPayloadBaseV1, Metadata};
+
+    fn processor() -> StateProcessor<MockEthProvider> {
+        let (_updates, rx) = mpsc::unbounded_channel();
+        let (sender, _) = broadcast::channel(1);
+        StateProcessor::new(
+            MockEthProvider::new(),
+            Arc::new(ArcSwapOption::empty()),
+            3,
+            Arc::new(Mutex::new(rx)),
+            MAINNET.clone(),
+            sender,
+            Arc::new(AtomicU64::new(0)),
+        )
+    }
+
+    #[test]
+    fn a_rebuild_without_flashblocks_publishes_nothing() {
+        assert!(processor().build_pending_state(None, &vec![]).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_flashblock_for_block_zero_is_rejected_before_the_anchor_lookup() {
+        let flashblock = FlashBlock {
+            base: Some(ExecutionPayloadBaseV1::default()),
+            metadata: Metadata::default(),
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            processor().build_pending_state(None, &vec![flashblock]),
+            Err(StateProcessorError::Protocol(ProtocolError::GenesisFlashblock))
+        ));
     }
 }

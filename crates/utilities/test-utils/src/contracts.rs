@@ -50,3 +50,12 @@ sol!(
         "/../../test_utils/contracts/out/PendingProbe.sol/PendingProbe.json"
     )
 );
+
+sol!(
+    #[sol(rpc)]
+    SelfDestructor,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test_utils/contracts/out/SelfDestructor.sol/SelfDestructor.json"
+    )
+);

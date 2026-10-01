@@ -13,7 +13,7 @@ use reth_chainspec::{ChainSpec, ChainSpecProvider};
 use reth_ethereum_primitives::Block;
 use reth_network_p2p::sync::SyncState;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use reth_provider::{BlockNumReader, BlockReader};
+use reth_provider::{BlockNumReader, BlockReader, DatabaseProviderFactory};
 use tokio::time::sleep;
 
 use ethgas_test_utils::build_test_genesis;
@@ -23,7 +23,7 @@ use crate::{
     test_utils::{
         constants::{BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, NODE_STARTUP_DELAY_MS},
         engine::EngineApi,
-        node::{LocalNode, LocalNodeProvider},
+        node::{LocalNode, LocalNodeOptions, LocalNodeProvider},
         tracing::init_silenced_tracing,
     },
 };
@@ -34,6 +34,9 @@ pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn EthgasNodeExtension>>,
     chain_spec: Option<Arc<ChainSpec>>,
     pending_state: Option<Arc<dyn PendingStateSource>>,
+    rpc_modules: Option<String>,
+    persistence_threshold: Option<u64>,
+    send_raw_transaction_sync_timeout: Option<Duration>,
 }
 
 impl TestHarnessBuilder {
@@ -66,6 +69,27 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Choose the HTTP and WS modules, as `--http.api` does: a comma-separated list such as
+    /// `"eth,net,web3,ots"`. The default is reth's standard set.
+    pub fn with_rpc_modules(mut self, rpc_modules: &str) -> Self {
+        self.rpc_modules = Some(rpc_modules.to_owned());
+        self
+    }
+
+    /// Set `--engine.persistence-threshold`: how many canonical blocks stay in memory before
+    /// the engine persists them. Zero persists every block as it turns canonical.
+    pub const fn with_persistence_threshold(mut self, persistence_threshold: u64) -> Self {
+        self.persistence_threshold = Some(persistence_threshold);
+        self
+    }
+
+    /// Set `--rpc.send-raw-transaction-sync-timeout`: the longest `eth_sendRawTransactionSync`
+    /// waits, which a requested timeout is clamped to.
+    pub const fn with_send_raw_transaction_sync_timeout(mut self, timeout: Duration) -> Self {
+        self.send_raw_transaction_sync_timeout = Some(timeout);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -75,7 +99,14 @@ impl TestHarnessBuilder {
             Arc::new(ChainSpec::from(genesis))
         });
 
-        let node = LocalNode::new(self.extensions, chain_spec, self.pending_state).await?;
+        let options = LocalNodeOptions {
+            rpc_modules: self.rpc_modules,
+            persistence_threshold: self.persistence_threshold,
+            send_raw_transaction_sync_timeout: self.send_raw_transaction_sync_timeout,
+        };
+        let node =
+            LocalNode::with_options(self.extensions, chain_spec, self.pending_state, options)
+                .await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
@@ -115,6 +146,34 @@ impl TestHarness {
     /// Access the low-level blockchain provider.
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.node.blockchain_provider()
+    }
+
+    /// The Engine API client, for forkchoice updates a helper does not cover.
+    pub const fn engine(&self) -> &EngineApi {
+        &self.engine
+    }
+
+    /// Path of the IPC endpoint, which serves every enabled module.
+    pub fn ipc_path(&self) -> Option<&str> {
+        self.node.ipc_path()
+    }
+
+    /// The highest block number the database holds. Blocks above it are canonical in memory
+    /// only, until the engine persists them.
+    pub fn persisted_block_number(&self) -> Result<u64> {
+        Ok(self.blockchain_provider().database_provider_ro()?.last_block_number()?)
+    }
+
+    /// Waits until the database holds block `number`. Persistence runs on its own task, so a
+    /// block is canonical before it is persisted even at a threshold of zero.
+    pub async fn wait_until_persisted(&self, number: u64) -> Result<()> {
+        for _ in 0..PERSISTENCE_POLLS {
+            if self.persisted_block_number()? >= number {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(PERSISTENCE_POLL_INTERVAL_MS)).await;
+        }
+        Err(eyre!("block {number} was not persisted in time"))
     }
 
     /// Set the sync state the node reports through `eth_syncing`.
@@ -244,6 +303,10 @@ impl TestHarness {
         self.chain_spec().chain().id()
     }
 }
+
+/// How often, and how long apart, [`TestHarness::wait_until_persisted`] polls the database.
+const PERSISTENCE_POLLS: u32 = 200;
+const PERSISTENCE_POLL_INTERVAL_MS: u64 = 25;
 
 struct SubmittedBlock {
     parent_hash: B256,

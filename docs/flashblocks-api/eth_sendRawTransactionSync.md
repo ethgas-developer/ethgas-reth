@@ -17,7 +17,7 @@ you submitting with `eth_sendRawTransaction` and then polling
 | Name | Type | Required | Description |
 |---|---|---|---|
 | `data` | string | yes | The signed transaction, RLP-encoded as a hex string |
-| `timeout_ms` | integer | no | How long to wait, in milliseconds. Defaults to `6000`, which is also the maximum |
+| `timeout_ms` | integer | no | How long to wait, in milliseconds. The node clamps it to its configured maximum, `--rpc.send-raw-transaction-sync-timeout`, 30 s unless the operator sets it. `0` or absent waits that maximum |
 
 ## Returns
 
@@ -62,14 +62,15 @@ A receipt object, in the same shape
 }
 ```
 
-## The timeout is a hard limit, not a clamp
+## The timeout is clamped, not refused
 
-`timeout_ms` above **6000** is rejected outright with `-32602` and the message
-`time out too long`. It is not silently reduced. A client that retries blindly on error can spin
-hard against this, so treat the error as fatal rather than retryable.
+`timeout_ms` above the node's configured maximum is reduced to it, never rejected. The maximum is
+`--rpc.send-raw-transaction-sync-timeout` on the node, 30 s unless the operator sets it. `0` or an
+absent `timeout_ms` waits the maximum. A shorter request is honoured as given.
 
-If the transaction misses its flashblock window, the call waits on confirmation instead, which
-cannot land inside the timeout. Expect a timeout error in that case, not a receipt.
+If the transaction misses its flashblock window, the call keeps waiting for its confirmation in a
+canonical block, until the timeout. Expect a timeout error after that, not a receipt. The error
+names the duration waited, which is the clamped value.
 
 ## The receipt is not proof of inclusion
 
@@ -84,7 +85,6 @@ builder has sequenced your transaction, not that it is in a confirmed block.
 
 | Code | Message |
 |---|---|
-| `-32602` | `time out too long` — `timeout_ms` above 6000 |
 | `-32000` | `nonce too low` |
 | `-32000` | `insufficient funds for gas * price + value` |
 | `-32000` | `already known` |

@@ -10,7 +10,7 @@
 // Re-export from ethgas-test-utils
 pub use ethgas_test_utils::{
     Account, DEVNET_CHAIN_ID, DoubleCounter, GENESIS_GAS_LIMIT, Minimal7702Account, MockERC20,
-    PendingProbe, TransparentUpgradeableProxy, build_test_genesis,
+    PendingProbe, SelfDestructor, TransparentUpgradeableProxy, build_test_genesis,
 };
 
 mod constants;
@@ -25,7 +25,7 @@ mod harness;
 pub use harness::{TestHarness, TestHarnessBuilder};
 
 mod node;
-pub use node::{LocalNode, LocalNodeProvider};
+pub use node::{LocalNode, LocalNodeOptions, LocalNodeProvider};
 
 mod tracing;
 pub use tracing::init_silenced_tracing;

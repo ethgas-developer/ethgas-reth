@@ -97,4 +97,12 @@ but this does not:
 groups logs by `blockHash` will collapse every pending log into one bucket. Group by
 `transactionHash` instead while a log is pending.
 
+**Without flashblock data,** `{"fromBlock": "pending", "toBlock": "pending"}` returns the logs of
+the next block when the node has already executed it for its consensus client, else of the latest
+confirmed block. A range that starts below `pending` ends at the latest confirmed block.
+
+**A filter never includes flashblock logs.** `eth_newFilter` with `fromBlock: "pending"`, read
+with `eth_getFilterLogs` or `eth_getFilterChanges`, answers from the node's executed next block,
+else from the latest confirmed block, as on any node. Poll with `eth_getLogs` instead.
+
 To stream pending logs rather than poll, subscribe to `pendingLogs`.

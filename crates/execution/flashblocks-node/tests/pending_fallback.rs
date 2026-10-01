@@ -97,6 +97,7 @@ impl PendingStateSource for OffChainAnchor {
     fn pending_overlay(&self) -> Option<PendingOverlay> {
         let anchor =
             Header { parent_hash: B256::repeat_byte(0xab), ..Default::default() }.seal_slow();
-        Some(PendingOverlay::from_bundle(anchor, 1, BundleState::default()))
+        let latest = Header { number: 1, ..Default::default() }.seal_slow();
+        Some(PendingOverlay::from_bundle(anchor, latest, BundleState::default()))
     }
 }

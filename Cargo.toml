@@ -79,6 +79,7 @@ reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v2.7.0" }
 reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v2.7.0" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v2.7.0" }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.7.0" }
+reth-node-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v2.7.0" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v2.7.0" }
 reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.7.0" }
 reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v2.7.0" }

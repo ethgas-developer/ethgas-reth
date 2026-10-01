@@ -19,22 +19,24 @@ use reth_trie_common::ComputedTrieData;
 pub struct PendingOverlay<N: NodePrimitives = EthPrimitives> {
     /// The canonical header the bundle was executed against, sealed so a reorg cannot move it.
     pub anchor: Sealed<Header>,
-    /// The highest block number the snapshot covers.
-    pub latest_block_number: u64,
+    /// The header of the highest pending block the snapshot covers: the block environment that a
+    /// call at `pending` runs in.
+    pub latest_header: SealedHeader<N::BlockHeader>,
     /// The pending state as an executed block, ready to append to the anchor's state. Cheap to
     /// clone.
     pub executed: ExecutedBlock<N>,
 }
 
 impl PendingOverlay {
-    /// Shapes a bundle into an overlay on `anchor`. Copies the bundle, so build once per snapshot.
+    /// Shapes a bundle into an overlay on `anchor`, with `latest` as the pending block's header.
+    /// Copies the bundle, so build once per snapshot.
     ///
     /// The executed block is a child of the anchor, as appending it to the anchor's state
     /// requires. Pending blocks have no hash on this node, so it carries a zero sentinel, which
     /// the overlay serves only for `BLOCKHASH` of that block number. Nothing reads its empty body.
     pub fn from_bundle(
         anchor: Sealed<Header>,
-        latest_block_number: u64,
+        latest: Sealed<Header>,
         bundle: BundleState,
     ) -> Self {
         let header =
@@ -51,7 +53,9 @@ impl PendingOverlay {
             ComputedTrieData::default(),
         );
 
-        Self { anchor, latest_block_number, executed }
+        let latest_header = SealedHeader::new(latest.inner().clone(), latest.hash());
+
+        Self { anchor, latest_header, executed }
     }
 }
 
@@ -74,10 +78,13 @@ mod tests {
     fn test_executed_block_is_a_child_of_the_anchor() {
         let anchor = Header { number: 7, ..Default::default() }.seal_slow();
 
-        let overlay = PendingOverlay::from_bundle(anchor.clone(), 9, BundleState::default());
+        let latest = Header { number: 9, ..Default::default() }.seal_slow();
+
+        let overlay = PendingOverlay::from_bundle(anchor.clone(), latest, BundleState::default());
         let block = overlay.executed.recovered_block();
 
         assert_eq!(block.parent_num_hash(), BlockNumHash::new(7, anchor.hash()));
         assert_eq!(block.hash(), B256::ZERO, "a pending block has no hash");
+        assert_eq!(overlay.latest_header.number(), 9, "calls run in the latest pending block");
     }
 }

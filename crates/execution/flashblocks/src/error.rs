@@ -18,6 +18,10 @@ pub enum ProtocolError {
     /// Cannot build from an empty flashblocks collection.
     #[error("empty flashblocks: cannot build state from zero flashblocks")]
     EmptyFlashblocks,
+
+    /// Genesis has no parent state on which to execute a flashblock.
+    #[error("cannot execute a genesis flashblock: block zero has no parent")]
+    GenesisFlashblock,
 }
 
 /// Errors related to state provider and infrastructure operations.
@@ -90,6 +94,13 @@ pub enum BuildError {
     /// Cannot build pending blocks with no flashblocks.
     #[error("no flashblocks: cannot build pending blocks from empty flashblock collection")]
     NoFlashblocks,
+
+    /// Cannot build pending blocks when the same transaction is added twice.
+    #[error("duplicate transaction: transaction {tx_hash} was added more than once to the builder")]
+    DuplicateTransaction {
+        /// The hash of the duplicated transaction.
+        tx_hash: B256,
+    },
 }
 
 /// Errors that can occur during flashblock state processing.
@@ -143,6 +154,10 @@ mod tests {
     #[case::empty_flashblocks(
         ProtocolError::EmptyFlashblocks,
         "empty flashblocks: cannot build state from zero flashblocks"
+    )]
+    #[case::genesis_flashblock(
+        ProtocolError::GenesisFlashblock,
+        "cannot execute a genesis flashblock: block zero has no parent"
     )]
     fn test_protocol_error_display(#[case] error: ProtocolError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
@@ -209,6 +224,12 @@ mod tests {
     #[case::no_flashblocks(
         BuildError::NoFlashblocks,
         "no flashblocks: cannot build pending blocks from empty flashblock collection"
+    )]
+    #[case::duplicate_transaction(
+        BuildError::DuplicateTransaction { tx_hash: B256::with_last_byte(1) },
+        "duplicate transaction: transaction \
+         0x0000000000000000000000000000000000000000000000000000000000000001 was added more than \
+         once to the builder"
     )]
     fn test_build_error_display(#[case] error: BuildError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);

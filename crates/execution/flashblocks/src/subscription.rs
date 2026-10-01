@@ -262,7 +262,10 @@ fn ensure_within_size_limit(len: usize) -> eyre::Result<()> {
 mod tests {
     use std::io::Write;
 
+    use alloy_primitives::U256;
+
     use super::*;
+    use crate::payload::InclusionFee;
 
     fn brotli_compress(bytes: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
@@ -307,5 +310,52 @@ mod tests {
 
         let err = try_parse_message(json.as_bytes()).expect_err("must reject");
         assert!(err.to_string().contains("too large"), "unexpected error: {err}");
+    }
+
+    /// A flashblock whose metadata is `metadata`, as the producer sends it.
+    fn flashblock_json(metadata: serde_json::Value) -> String {
+        serde_json::to_string(&FlashblocksPayloadV1 { metadata, ..Default::default() })
+            .expect("a payload serializes")
+    }
+
+    fn metadata_with_inclusion_fee(inclusion_fee: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "block_number": 1,
+            "new_account_balances": {},
+            "receipts": {},
+            "inclusion_fee": inclusion_fee,
+        })
+    }
+
+    #[test]
+    fn a_malformed_inclusion_fee_rejects_the_whole_flashblock() {
+        let text = flashblock_json(metadata_with_inclusion_fee(
+            serde_json::json!({"priority_fee": "not a quantity"}),
+        ));
+
+        let err = parse_flashblock_json(&text).expect_err("must reject");
+        assert!(err.to_string().contains("metadata"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn a_null_inclusion_fee_decodes_as_none() {
+        let text = flashblock_json(metadata_with_inclusion_fee(serde_json::Value::Null));
+
+        let parsed = parse_flashblock_json(&text).expect("accepted");
+        assert_eq!(parsed.metadata.inclusion_fee, None);
+        assert_eq!(parsed.metadata.block_number, 1);
+    }
+
+    #[test]
+    fn an_unknown_key_in_the_inclusion_fee_is_ignored() {
+        let text = flashblock_json(metadata_with_inclusion_fee(
+            serde_json::json!({"priority_fee": "0x10", "tier": "high"}),
+        ));
+
+        let parsed = parse_flashblock_json(&text).expect("accepted");
+        assert_eq!(
+            parsed.metadata.inclusion_fee,
+            Some(InclusionFee { priority_fee: U256::from(16) })
+        );
     }
 }

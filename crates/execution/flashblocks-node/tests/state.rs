@@ -6,8 +6,7 @@ mod tests {
     use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag, Encodable2718};
     use alloy_genesis::Genesis;
     use alloy_primitives::{
-        Address, B256, BlockNumber, Bytes, TxHash, TxKind, U256, address, b256, bytes,
-        map::foldhash::HashMap,
+        Address, B256, BlockNumber, Bytes, TxKind, U256, address, b256, map::foldhash::HashMap,
     };
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
@@ -25,7 +24,7 @@ mod tests {
     use reth_network_p2p::sync::NoopSyncStateUpdater;
     use reth_node_api::NodeTypesWithDBAdapter;
     use reth_provider::{AccountReader, BlockNumReader, BlockReader};
-    use reth_revm::database::StateProviderDatabase;
+    use reth_revm::{database::StateProviderDatabase, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use reth_trie_common::{
         ComputedTrieData, HashedPostState, KeccakKeyHasher, updates::TrieUpdates,
@@ -45,12 +44,18 @@ mod tests {
     use std::{sync::Arc, time::Duration};
     use tokio::time::sleep;
 
-    const TRANSFER_ETH_HASH: TxHash =
-        b256!("0x706bbbf402a4f55831d250c77be8f368e16d9b63df9d58561cea8d1f2b59030b");
+    /// Sign the one transaction every base flashblock carries, a key per block number, so no
+    /// transaction repeats across the blocks of a pending span and each stays valid whichever of
+    /// those blocks the chain keeps. The first four accounts of the standard test mnemonic, funded
+    /// at genesis and never a `User`.
+    const BASE_SIGNERS: [B256; 4] = [
+        b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+        b256!("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"),
+        b256!("0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"),
+        b256!("0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"),
+    ];
 
-    const TRANSFER_ETH_TX: Bytes = bytes!(
-        "0x02f86b0180806482520894deadbeefdeadbeefdeadbeefdeadbeefdeadbeef8902b5e3af16b188000080c001a0c18767bf03c514933cfec05f2c9a354bf4e8eaafe2e4e7c86836bfc0fb62ad42a02b291b32c588337b7b45420076433157a440bb97afebb154988986527a6ef535"
-    );
+    const BASE_TRANSFER_RECIPIENT: Address = address!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
 
     // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical
     // block so it can be processed by the state processor
@@ -111,23 +116,43 @@ mod tests {
 
         fn account_state(&self, u: User) -> Account {
             let basic_account = self.canonical_account(u);
+            let pending = self.flashblocks.get_pending_blocks();
 
-            let nonce = self
-                .flashblocks
-                .get_pending_blocks()
-                .get_transaction_count(self.address(u))
-                .to::<u64>();
-            let balance = self
-                .flashblocks
-                .get_pending_blocks()
-                .get_balance(self.address(u))
-                .unwrap_or(basic_account.balance);
+            let nonce = pending
+                .as_ref()
+                .and_then(|pending| {
+                    pending.bundle_state().account(&self.address(u))?.account_info()
+                })
+                .map_or(basic_account.nonce, |info| info.nonce);
+            let balance = pending.get_balance(self.address(u)).unwrap_or(basic_account.balance);
 
-            Account {
-                nonce: nonce + basic_account.nonce,
-                balance,
-                bytecode_hash: basic_account.bytecode_hash,
-            }
+            Account { nonce, balance, bytecode_hash: basic_account.bytecode_hash }
+        }
+
+        /// The account as pending execution left it; `None` when pending execution never touched
+        /// it.
+        fn pending_account(&self, u: User) -> Option<AccountInfo> {
+            let pending = self.flashblocks.get_pending_blocks();
+            let bundle = pending.as_ref().expect("a snapshot is published").bundle_state();
+            bundle.account(&self.address(u)).and_then(|account| account.account_info())
+        }
+
+        fn pending_storage(&self, address: Address, slot: U256) -> Option<U256> {
+            let pending = self.flashblocks.get_pending_blocks();
+            let bundle = pending.as_ref().expect("a snapshot is published").bundle_state();
+            bundle.account(&address).and_then(|account| account.storage_slot(slot))
+        }
+
+        fn build_base_transaction(&self, block_number: BlockNumber) -> TransactionSigned {
+            TransactionBuilder::default()
+                .signer(BASE_SIGNERS[block_number as usize % BASE_SIGNERS.len()])
+                .chain_id(self.provider.chain_spec().chain_id())
+                .to(BASE_TRANSFER_RECIPIENT)
+                .nonce(0)
+                .value(1)
+                .gas_limit(21_000)
+                .max_fee_per_gas(2_000_000_000)
+                .into_eip1559()
         }
 
         fn build_transaction_to_send_eth(
@@ -373,25 +398,7 @@ mod tests {
 
     impl FlashblockBuilder {
         fn new_base(harness: &TestHarness) -> Self {
-            Self {
-                canonical_block_number: None,
-                transactions: vec![TRANSFER_ETH_TX],
-                receipts: {
-                    let mut receipts = HashMap::default();
-                    receipts.insert(
-                        TRANSFER_ETH_HASH,
-                        Receipt {
-                            tx_type: TxType::Eip1559,
-                            success: true,
-                            cumulative_gas_used: 21000,
-                            logs: vec![],
-                        },
-                    );
-                    receipts
-                },
-                index: 0,
-                harness: harness.clone(),
-            }
+            Self::new(harness, 0)
         }
         fn new(harness: &TestHarness, index: u64) -> Self {
             Self {
@@ -439,6 +446,22 @@ mod tests {
             let canonical_block_num =
                 self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
 
+            let mut transactions = self.transactions.clone();
+            let mut receipts = self.receipts.clone();
+            if self.index == 0 {
+                let base_tx = self.harness.build_base_transaction(canonical_block_num);
+                receipts.insert(
+                    *base_tx.tx_hash(),
+                    Receipt {
+                        tx_type: TxType::Eip1559,
+                        success: true,
+                        cumulative_gas_used: 21000,
+                        logs: vec![],
+                    },
+                );
+                transactions.insert(0, base_tx.encoded_2718().into());
+            }
+
             let base = (self.index == 0).then(|| ExecutionPayloadBaseV1 {
                 parent_beacon_block_root: current_block.hash(),
                 parent_hash: current_block.hash(),
@@ -462,13 +485,13 @@ mod tests {
                     gas_used: 0,
                     withdrawals: Vec::new(),
                     logs_bloom: Default::default(),
-                    transactions: self.transactions.clone(),
+                    transactions,
                     blob_gas_used: 0,
                     excess_blob_gas: 0,
                 },
                 metadata: Metadata {
                     block_number: canonical_block_num,
-                    receipts: self.receipts.clone(),
+                    receipts,
                     new_account_balances: HashMap::default(),
                     inclusion_fee: None,
                 },
@@ -477,7 +500,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_state_overrides_persisted_across_flashblocks() {
+    async fn test_pending_state_persisted_across_flashblocks() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
@@ -492,15 +515,7 @@ mod tests {
             1
         );
 
-        assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
-        assert!(
-            !test
-                .flashblocks
-                .get_pending_blocks()
-                .get_state_overrides()
-                .unwrap()
-                .contains_key(&test.address(User::Alice))
-        );
+        assert!(test.pending_account(User::Alice).is_none());
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -518,45 +533,25 @@ mod tests {
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 2);
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution");
-
-        assert!(overrides.contains_key(&test.address(User::Alice)));
+        assert_eq!(test.pending_account(User::Alice).expect("the sender is touched").nonce, 1);
         assert_eq!(
-            overrides
-                .get(&test.address(User::Bob))
-                .expect("should be set as txn receiver")
-                .balance
-                .expect("should be changed due to receiving funds"),
+            test.pending_account(User::Bob).expect("the receiver is touched").balance,
             U256::from_str("1000000000000000000100000").unwrap() /* Genesis balance (1M ETH) +
                                                                   * 100k wei received */
         );
 
         test.send_flashblock(FlashblockBuilder::new(&test, 2).build()).await;
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution in flashblock index 1");
-
-        assert!(overrides.contains_key(&test.address(User::Alice)));
+        assert_eq!(test.pending_account(User::Alice).expect("the sender is touched").nonce, 1);
         assert_eq!(
-            overrides
-                .get(&test.address(User::Bob))
-                .expect("should be set as txn receiver")
-                .balance
-                .expect("should be changed due to receiving funds"),
+            test.pending_account(User::Bob).expect("the receiver is touched").balance,
             U256::from_str("1000000000000000000100000").unwrap() /* Genesis balance (1M ETH) +
                                                                   * 100k wei received */
         );
     }
 
     #[tokio::test]
-    async fn test_state_overrides_persisted_across_blocks() {
+    async fn test_pending_state_persisted_across_blocks() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
@@ -573,15 +568,7 @@ mod tests {
             1
         );
 
-        assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
-        assert!(
-            !test
-                .flashblocks
-                .get_pending_blocks()
-                .get_state_overrides()
-                .unwrap()
-                .contains_key(&test.address(User::Alice))
-        );
+        assert!(test.pending_account(User::Alice).is_none());
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -599,19 +586,9 @@ mod tests {
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 2);
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution");
-
-        assert!(overrides.contains_key(&test.address(User::Alice)));
+        assert_eq!(test.pending_account(User::Alice).expect("the sender is touched").nonce, 1);
         assert_eq!(
-            overrides
-                .get(&test.address(User::Bob))
-                .expect("should be set as txn receiver")
-                .balance
-                .expect("should be changed due to receiving funds"),
+            test.pending_account(User::Bob).expect("the receiver is touched").balance,
             U256::from_str("1000000000000000000100000").unwrap() /* Genesis balance (1M ETH) +
                                                                   * 100k wei received */
         );
@@ -642,13 +619,10 @@ mod tests {
             initial_block_number + 1
         );
 
-        assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
-        assert!(
-            test.flashblocks
-                .get_pending_blocks()
-                .get_state_overrides()
-                .unwrap()
-                .contains_key(&test.address(User::Alice))
+        assert_eq!(
+            test.pending_account(User::Alice).expect("the first block touched the sender").nonce,
+            1,
+            "the second block's base carries the first block's state"
         );
 
         test.send_flashblock(
@@ -663,19 +637,9 @@ mod tests {
         )
         .await;
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution");
-
-        assert!(overrides.contains_key(&test.address(User::Alice)));
+        assert_eq!(test.pending_account(User::Alice).expect("the sender is touched").nonce, 2);
         assert_eq!(
-            overrides
-                .get(&test.address(User::Bob))
-                .expect("should be set as txn receiver")
-                .balance
-                .expect("should be changed due to receiving funds"),
+            test.pending_account(User::Bob).expect("the receiver is touched").balance,
             // Pending blocks stack: Bob received 100k in block N and another 100k in block N+1.
             U256::from(1000000000000000000200000u128)
         );
@@ -701,15 +665,7 @@ mod tests {
                 .len(),
             1
         );
-        assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
-        assert!(
-            !test
-                .flashblocks
-                .get_pending_blocks()
-                .get_state_overrides()
-                .unwrap()
-                .contains_key(&test.address(User::Alice))
-        );
+        assert!(test.pending_account(User::Alice).is_none());
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -726,19 +682,9 @@ mod tests {
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 2);
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution");
-
-        assert!(overrides.contains_key(&test.address(User::Alice)));
+        assert_eq!(test.pending_account(User::Alice).expect("the sender is touched").nonce, 1);
         assert_eq!(
-            overrides
-                .get(&test.address(User::Bob))
-                .expect("should be set as txn receiver")
-                .balance
-                .expect("should be changed due to receiving funds"),
+            test.pending_account(User::Bob).expect("the receiver is touched").balance,
             U256::from_str("1000000000000000000100000").unwrap() /* Genesis balance (1M ETH) +
                                                                   * 100k wei received */
         );
@@ -763,19 +709,9 @@ mod tests {
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 2);
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution");
-
-        assert!(overrides.contains_key(&test.address(User::Alice)));
+        assert_eq!(test.pending_account(User::Alice).expect("the sender is touched").nonce, 2);
         assert_eq!(
-            overrides
-                .get(&test.address(User::Bob))
-                .expect("should be set as txn receiver")
-                .balance
-                .expect("should be changed due to receiving funds"),
+            test.pending_account(User::Bob).expect("the receiver is touched").balance,
             // Pending blocks stack: Bob received 100k in block N and another 100k in block N+1.
             U256::from(1000000000000000000200000u128)
         );
@@ -793,19 +729,13 @@ mod tests {
         let pending = pending.unwrap();
         assert_eq!(pending.transactions.len(), 2);
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution");
-
-        assert!(overrides.contains_key(&test.address(User::Alice)));
         assert_eq!(
-            overrides
-                .get(&test.address(User::Bob))
-                .expect("should be set as txn receiver")
-                .balance
-                .expect("should be changed due to receiving funds"),
+            test.pending_account(User::Alice).expect("the sender is touched").nonce,
+            2,
+            "the canonical transfer and the surviving flashblock transfer"
+        );
+        assert_eq!(
+            test.pending_account(User::Bob).expect("the receiver is touched").balance,
             // After reconciliation Bob's pending balance is his *canonical* balance plus the
             // surviving flashblock delta: genesis + 100 (received in the canonical block) +
             // 100_000 (the still-pending flashblock transfer). Mirrors base's
@@ -842,6 +772,44 @@ mod tests {
         let pending = pending_block.unwrap();
         assert_eq!(pending.header.number, current.header.number);
         assert_eq!(pending.transactions, current.transactions);
+    }
+
+    /// A flashblock whose wire receipts report a falling cumulative gas is rejected, and the
+    /// processor goes on to apply the next valid flashblock.
+    #[tokio::test]
+    async fn test_a_falling_cumulative_gas_rejects_the_flashblock() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+        let transfer = test.build_transaction_to_send_eth(User::Alice, User::Bob, 100);
+        let mut receipts = HashMap::default();
+        receipts.insert(
+            *transfer.tx_hash(),
+            Receipt {
+                tx_type: TxType::Eip1559,
+                success: true,
+                // Below the base transaction's 21000.
+                cumulative_gas_used: 20_000,
+                logs: vec![],
+            },
+        );
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1)
+                .with_transactions(vec![transfer.clone()])
+                .with_receipts(receipts)
+                .build(),
+        )
+        .await;
+        let pending = test.flashblocks.get_pending_blocks().get_block(true).expect("block");
+        assert_eq!(pending.transactions.len(), 1, "the flashblock must be rejected");
+
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1).with_transactions(vec![transfer]).build(),
+        )
+        .await;
+        let pending = test.flashblocks.get_pending_blocks().get_block(true).expect("block");
+        assert_eq!(pending.transactions.len(), 2, "the next valid flashblock must still apply");
     }
 
     #[tokio::test]
@@ -983,71 +951,6 @@ mod tests {
         assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
     }
 
-    // Reproduces the nonce double-count race: `new_canonical_block_without_processing` advances the
-    // `BlockchainProvider`'s in-memory canonical head (so `basic_account(...).nonce` reflects the
-    // new block) while intentionally leaving the pending state un-reconciled, so `onchain_nonce
-    // + pending_txn_count` transiently double-counts until reconciliation runs.
-    #[tokio::test]
-    async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
-        // Test for race condition when a canon block comes in but user
-        // requests their nonce prior to the StateProcessor processing the canon block
-        // causing it to return an n+1 nonce instead of n
-        // because underlying reth node `latest` block is already updated, but
-        // relevant pending state has not been cleared yet
-        reth_tracing::init_test_tracing();
-        let mut test = TestHarness::new();
-
-        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
-        test.send_flashblock(
-            FlashblockBuilder::new(&test, 1)
-                .with_transactions(vec![test.build_transaction_to_send_eth(
-                    User::Alice,
-                    User::Bob,
-                    100,
-                )])
-                .build(),
-        )
-        .await;
-
-        let pending_nonce = test.canonical_account(User::Alice).nonce +
-            test.flashblocks
-                .get_pending_blocks()
-                .get_transaction_count(test.address(User::Alice))
-                .to::<u64>();
-        assert_eq!(pending_nonce, 1);
-
-        test.new_canonical_block_without_processing(vec![
-            test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, 100, 0),
-        ])
-        .await;
-
-        let pending_nonce = test.canonical_account(User::Alice).nonce +
-            test.flashblocks
-                .get_pending_blocks()
-                .get_transaction_count(test.address(User::Alice))
-                .to::<u64>();
-
-        // This is 2, because canon block has reached the underlying chain
-        // but the StateProcessor hasn't processed it
-        // so pending nonce is effectively double-counting the same transaction
-        assert_eq!(pending_nonce, 2);
-
-        // On the RPC level, we correctly return 1 because we
-        // use the pending canon block instead of the latest block when fetching
-        // onchain nonce count to compute
-        // pending_nonce = onchain_nonce + pending_txn_count
-        let canon_block = test.flashblocks.get_pending_blocks().get_canonical_block_number();
-        let canon_state_provider = test.provider.state_by_block_number_or_tag(canon_block).unwrap();
-        let canon_nonce =
-            canon_state_provider.account_nonce(&test.address(User::Alice)).unwrap().unwrap();
-        let pending_nonce = canon_nonce +
-            test.flashblocks
-                .get_pending_blocks()
-                .get_transaction_count(test.address(User::Alice))
-                .to::<u64>();
-        assert_eq!(pending_nonce, 1);
-    }
-
     /// Verifies that transactions in flashblock N+1 can see state changes from flashblock N.
     ///
     /// This test catches database layering bugs where writes from earlier flashblocks
@@ -1093,19 +996,15 @@ mod tests {
         );
 
         // Also verify Bob and Charlie received their funds
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("state overrides should exist");
-
-        assert!(
-            overrides.contains_key(&test.address(User::Bob)),
-            "Bob should have received funds from flashblock 1"
+        assert_eq!(
+            test.pending_account(User::Bob).expect("Bob received funds in flashblock 1").balance,
+            test.canonical_account(User::Bob).balance + U256::from(1000)
         );
-        assert!(
-            overrides.contains_key(&test.address(User::Charlie)),
-            "Charlie should have received funds from flashblock 2"
+        assert_eq!(
+            test.pending_account(User::Charlie)
+                .expect("Charlie received funds in flashblock 2")
+                .balance,
+            test.canonical_account(User::Charlie).balance + U256::from(2000)
         );
     }
 
@@ -1179,22 +1078,13 @@ mod tests {
         assert_eq!(pending.header.number, 2);
         assert_eq!(pending.transactions.len(), 2, "base tx + Alice->Bob transfer");
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("state overrides should exist after replayed flashblock execution");
-        assert!(
-            overrides.contains_key(&test.address(User::Alice)),
-            "Alice should appear in overrides after sending ETH"
+        assert_eq!(
+            test.pending_account(User::Alice).expect("the replayed transfer touched Alice").nonce,
+            1
         );
-        assert!(
-            overrides
-                .get(&test.address(User::Bob))
-                .expect("Bob should have state override")
-                .balance
-                .is_some(),
-            "Bob's balance should be overridden"
+        assert_eq!(
+            test.pending_account(User::Bob).expect("the replayed transfer touched Bob").balance,
+            test.canonical_account(User::Bob).balance + U256::from(transfer_amount)
         );
     }
 
@@ -1215,42 +1105,6 @@ mod tests {
             test.flashblocks.get_pending_blocks().is_none(),
             "flashblock too far ahead should not be cached or produce pending state"
         );
-    }
-
-    /// Regression for `5721773`: the pending override must carry the deployed code, not revm's
-    /// jump-table-padded analysis of it.
-    #[tokio::test]
-    async fn pending_override_carries_original_bytecode() {
-        reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
-
-        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
-
-        let deployer = User::Bob;
-        let nonce = test.account_state(deployer).nonce;
-        let probe = test.address(deployer).create(nonce);
-        let deployment =
-            test.build_deployment_transaction(deployer, PendingProbe::BYTECODE.clone(), nonce);
-
-        test.send_flashblock(
-            FlashblockBuilder::new(&test, 1).with_transactions(vec![deployment]).build(),
-        )
-        .await;
-
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution");
-
-        let code = overrides
-            .get(&probe)
-            .expect("deployed contract should be overridden")
-            .code
-            .clone()
-            .expect("deployment should override code");
-
-        assert_eq!(code, PendingProbe::DEPLOYED_BYTECODE.clone());
     }
 
     /// Regression for `117eae2`: `BLOCKHASH` of a parent that is itself pending resolves to the
@@ -1290,21 +1144,9 @@ mod tests {
         )
         .await;
 
-        let overrides = test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .expect("should be set from txn execution");
-
-        let stored = overrides
-            .get(&probe)
-            .expect("probe should be overridden")
-            .state_diff
-            .as_ref()
-            .expect("recordParentHash writes a slot")
-            .get(&B256::ZERO)
-            .copied()
-            .expect("parentHash occupies slot 0");
+        let stored = B256::from(
+            test.pending_storage(probe, U256::ZERO).expect("parentHash occupies slot 0"),
+        );
 
         assert_eq!(stored, parent_hash);
         assert_ne!(stored, B256::ZERO, "a zero hash would mean BLOCKHASH missed");

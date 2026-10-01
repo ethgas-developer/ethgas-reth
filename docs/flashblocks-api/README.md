@@ -17,6 +17,7 @@ One page each, with parameters, payload shapes and worked examples.
 |---|---|
 | [eth_simulateV1](./eth_simulateV1.md) | Simulate call bundles against pre-confirmed state |
 | [eth_sendRawTransactionSync](./eth_sendRawTransactionSync.md) | Submit a transaction and wait for pre-confirmation |
+| [ethgas_inclusionPriorityFee](./ethgas_inclusionPriorityFee.md) | The builder's inclusion fee, with its source and age |
 
 **Subscriptions** — WebSocket only, through `eth_subscribe`
 

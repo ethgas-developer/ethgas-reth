@@ -28,6 +28,7 @@ use tracing::error;
 
 use crate::{
     FlashblocksAPI, TransactionWithLogs,
+    metrics::Metrics,
     rpc::types::{ExtendedSubscriptionKind, FlashblocksSubscriptionKind},
 };
 
@@ -65,6 +66,7 @@ pub struct EthPubSub<Eth, FB> {
     inner: RethEthPubSub<Eth>,
     /// Flashblocks state for accessing pending blocks stream
     flashblocks_state: Arc<FB>,
+    metrics: Metrics,
 }
 
 impl<Eth, FB> EthPubSub<Eth, FB> {
@@ -77,7 +79,26 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         subscription_task_spawner: Runtime,
         flashblocks_state: Arc<FB>,
     ) -> Self {
-        Self { inner: RethEthPubSub::new(eth_api, subscription_task_spawner), flashblocks_state }
+        Self {
+            inner: RethEthPubSub::new(eth_api, subscription_task_spawner),
+            flashblocks_state,
+            metrics: Metrics::default(),
+        }
+    }
+
+    /// Counts an opened subscription by kind.
+    fn count_subscription(&self, kind: &FlashblocksSubscriptionKind) {
+        match kind {
+            FlashblocksSubscriptionKind::NewFlashblocks => {
+                self.metrics.subscriptions_new_flashblocks.increment(1)
+            }
+            FlashblocksSubscriptionKind::PendingLogs => {
+                self.metrics.subscriptions_pending_logs.increment(1)
+            }
+            FlashblocksSubscriptionKind::NewFlashblockTransactions => {
+                self.metrics.subscriptions_new_flashblock_transactions.increment(1)
+            }
+        }
     }
 
     /// Returns a stream that yields all new flashblocks as RPC blocks
@@ -259,6 +280,7 @@ where
         };
 
         let sink = pending.accept().await?;
+        self.count_subscription(&fb_kind);
 
         match fb_kind {
             FlashblocksSubscriptionKind::NewFlashblocks => {

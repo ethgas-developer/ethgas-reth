@@ -63,4 +63,5 @@ that `eth_getBlockByNumber("pending", true)` lists at that index. Every index be
 
 A pre-confirmed transaction has `blockHash: null` and a real `blockNumber` and `transactionIndex`.
 
-Without flashblock data, `pending` returns the latest confirmed block.
+Without flashblock data, `pending` indexes the next block when the node has already executed it
+for its consensus client, else the latest confirmed block.

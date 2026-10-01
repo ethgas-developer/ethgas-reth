@@ -54,6 +54,7 @@ impl BlockAssembler {
     /// Returns an error if:
     /// - The flashblocks slice is empty
     /// - The first flashblock is missing its base payload
+    /// - The base payload names block zero, which has no parent state
     /// - A transaction in the block has no receipt on the wire
     /// - Block conversion fails
     pub fn assemble(
@@ -62,6 +63,9 @@ impl BlockAssembler {
     ) -> Result<AssembledBlock> {
         let first = flashblocks.first().ok_or(ProtocolError::EmptyFlashblocks)?;
         let base = first.base.clone().ok_or(ProtocolError::MissingBase)?;
+        if base.block_number == 0 {
+            return Err(ProtocolError::GenesisFlashblock.into());
+        }
         let latest_flashblock = flashblocks.last().ok_or(ProtocolError::EmptyFlashblocks)?;
 
         let transactions: Vec<Bytes> = flashblocks
@@ -172,6 +176,7 @@ mod tests {
     use super::*;
     use crate::{
         ProtocolError,
+        error::StateProcessorError,
         payload::{
             ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
         },
@@ -377,9 +382,18 @@ mod tests {
 
         assert!(matches!(
             BlockAssembler::assemble(&test_spec(), &[flashblock]),
-            Err(crate::error::StateProcessorError::Execution(
-                ExecutionError::MissingReceipt { .. }
-            ))
+            Err(StateProcessorError::Execution(ExecutionError::MissingReceipt { .. }))
+        ));
+    }
+
+    #[test]
+    fn assemble_rejects_a_base_payload_for_block_zero() {
+        let mut flashblock = create_test_flashblock(0, true);
+        flashblock.base.as_mut().expect("a base payload").block_number = 0;
+
+        assert!(matches!(
+            BlockAssembler::assemble(&test_spec(), &[flashblock]),
+            Err(StateProcessorError::Protocol(ProtocolError::GenesisFlashblock))
         ));
     }
 

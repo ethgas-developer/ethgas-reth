@@ -4,7 +4,10 @@
 //! pending balance, pending transaction receipt, `eth_call` with flashblock state, etc.)
 //! by launching a full local Ethereum node with the flashblocks test extension.
 
-use std::{str::FromStr, time::Duration};
+use std::{
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 use DoubleCounter::DoubleCounterInstance;
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
@@ -808,6 +811,31 @@ async fn test_get_proof_refuses_pending() -> Result<()> {
 
 /// While the engine holds an executed block at least as new as the snapshot, `pending` is that
 /// block, which has a state root, so a proof at `pending` answers from it.
+/// `eth_getProof` refuses more than 1024 storage keys before any trie work, as go-ethereum and
+/// base do. 1024 keys are served.
+#[tokio::test]
+async fn test_get_proof_caps_the_storage_keys_at_1024() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    let keys: Vec<B256> =
+        (0..1025u64).map(|slot| B256::from(U256::from(slot).to_be_bytes::<32>())).collect();
+
+    let err = provider
+        .get_proof(Account::Alice.address(), keys.clone())
+        .latest()
+        .await
+        .expect_err("1025 keys must be refused");
+    let message = err.to_string();
+    assert!(message.contains("-32602"), "expected an invalid-params error, got: {message}");
+    assert!(message.contains("too many storage keys: max 1024, got 1025"), "got: {message}");
+
+    let proof =
+        provider.get_proof(Account::Alice.address(), keys[..1024].to_vec()).latest().await?;
+    assert_eq!(proof.storage_proof.len(), 1024);
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_get_proof_at_pending_answers_from_the_engine_block() -> Result<()> {
     let setup = TestSetup::new().await?;
@@ -1089,20 +1117,68 @@ async fn test_send_raw_transaction_sync() -> Result<()> {
     Ok(())
 }
 
+/// A transaction the builder already holds has its receipt in the current snapshot. The call
+/// returns it at once, instead of waiting for a broadcast that repeats it or for the timeout.
 #[tokio::test]
-async fn test_send_raw_transaction_sync_timeout() {
-    let setup = TestSetup::new().await.unwrap();
+async fn test_send_raw_transaction_sync_finds_the_receipt_in_the_current_snapshot() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    setup.send_test_payloads().await?;
 
-    // A 0ms timeout fails the request immediately (the tx is never delivered).
-    let receipt_result = setup
-        .send_raw_transaction_sync(setup.txn_details.alice_eth_transfer_tx.clone(), Some(0))
-        .await;
-
-    let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
+    let started = Instant::now();
+    let receipt = setup
+        .send_raw_transaction_sync(setup.txn_details.alice_eth_transfer_tx.clone(), Some(3_000))
+        .await?;
+    assert_eq!(receipt.transaction_hash, setup.txn_details.alice_eth_transfer_hash);
     assert!(
-        receipt_result.err().unwrap().to_string().contains(format!("{error_code}").as_str()),
-        "expected a transaction-confirmation-timeout error"
+        started.elapsed() < Duration::from_secs(2),
+        "the receipt must come from the snapshot, not from a broadcast or the timeout"
     );
+
+    Ok(())
+}
+
+/// A requested timeout is clamped to `--rpc.send-raw-transaction-sync-timeout`; zero or none is
+/// that value, and a shorter request is honoured. No flashblock carries the transactions, so
+/// every call ends with the timeout error, which names the duration waited.
+#[tokio::test]
+async fn test_send_raw_transaction_sync_clamps_the_timeout_to_the_configured_value() -> Result<()> {
+    let configured = Duration::from_millis(300);
+    let setup = TestSetup::with_harness(
+        FlashblocksHarness::with_send_raw_transaction_sync_timeout(configured).await?,
+    )?;
+    let timeout_code = EthRpcErrorCode::TransactionConfirmationTimeout.code().to_string();
+
+    for (nonce, requested, expected) in [
+        (10, Some(60_000), configured),
+        (11, Some(0), configured),
+        (12, None, configured),
+        (13, Some(100), Duration::from_millis(100)),
+    ] {
+        let (tx, _) = Account::Alice
+            .sign_txn_request(
+                TransactionRequest::default()
+                    .to(Account::Bob.address())
+                    .value(U256::from(1))
+                    .gas_limit(21_000)
+                    .nonce(nonce),
+            )
+            .expect("should be able to sign the transfer");
+        let err = tokio::time::timeout(
+            Duration::from_secs(5),
+            setup.send_raw_transaction_sync(tx, requested),
+        )
+        .await
+        .expect("the call must end at the configured timeout, not at the requested one")
+        .expect_err("no flashblock carries the transaction");
+        let message = err.to_string();
+        assert!(message.contains(&timeout_code), "{requested:?}: {message}");
+        assert!(
+            message.contains(&format!("within {expected:?}")),
+            "{requested:?}: the error must name the clamped timeout, got: {message}"
+        );
+    }
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -1334,31 +1410,6 @@ async fn test_eth_estimate_gas_pending_executes_against_flashblock_state() -> Re
         pending > latest,
         "pending ({pending}) must pay for the SSTORE the flashblock-deployed counter executes, \
          latest is {latest}"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_send_raw_transaction_sync_rejects_a_timeout_above_the_cap() -> Result<()> {
-    let setup = TestSetup::new().await?;
-
-    let err = setup
-        .send_raw_transaction_sync(setup.txn_details.alice_eth_transfer_tx.clone(), Some(6_001))
-        .await
-        .expect_err("6001 ms must be rejected, not clamped");
-    let message = err.to_string();
-    assert!(message.contains("-32602"), "expected an invalid-params error, got: {message}");
-    assert!(message.contains("time out too long"), "got: {message}");
-
-    // The rejection comes before submission, so the pool never saw the transaction.
-    assert!(
-        setup
-            .harness
-            .provider()
-            .get_transaction_by_hash(setup.txn_details.alice_eth_transfer_hash)
-            .await?
-            .is_none()
     );
 
     Ok(())
@@ -1944,7 +1995,6 @@ async fn test_eth_simulate_v1_pending_carries_state_from_block_to_block() -> Res
 /// for the block-shaped methods as for the state methods. Once forkchoice makes that block
 /// canonical, `pending` is the latest block again: the same block.
 #[tokio::test]
-#[ignore = "waits on the owner's decision: without a snapshot the block methods still answer latest"]
 async fn test_pending_without_a_snapshot_describes_the_engine_block() -> Result<()> {
     let setup = TestSetup::manual_canonical().await?;
     let provider = setup.harness.provider();

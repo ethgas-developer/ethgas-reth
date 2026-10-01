@@ -36,6 +36,7 @@ pub struct TestHarnessBuilder {
     pending_state: Option<Arc<dyn PendingStateSource>>,
     rpc_modules: Option<String>,
     persistence_threshold: Option<u64>,
+    send_raw_transaction_sync_timeout: Option<Duration>,
 }
 
 impl TestHarnessBuilder {
@@ -82,6 +83,13 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Set `--rpc.send-raw-transaction-sync-timeout`: the longest `eth_sendRawTransactionSync`
+    /// waits, which a requested timeout is clamped to.
+    pub const fn with_send_raw_transaction_sync_timeout(mut self, timeout: Duration) -> Self {
+        self.send_raw_transaction_sync_timeout = Some(timeout);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
@@ -94,6 +102,7 @@ impl TestHarnessBuilder {
         let options = LocalNodeOptions {
             rpc_modules: self.rpc_modules,
             persistence_threshold: self.persistence_threshold,
+            send_raw_transaction_sync_timeout: self.send_raw_transaction_sync_timeout,
         };
         let node =
             LocalNode::with_options(self.extensions, chain_spec, self.pending_state, options)

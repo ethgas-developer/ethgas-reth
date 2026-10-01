@@ -1,6 +1,6 @@
 //! Local node setup for Ethereum integration testing.
 
-use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
@@ -42,6 +42,9 @@ pub struct LocalNodeOptions {
     /// `--engine.persistence-threshold`: how many canonical blocks stay in memory before the
     /// engine persists them. `None` keeps reth's default.
     pub persistence_threshold: Option<u64>,
+    /// `--rpc.send-raw-transaction-sync-timeout`: the longest `eth_sendRawTransactionSync`
+    /// waits, which a requested timeout is clamped to. `None` keeps reth's default of 30 s.
+    pub send_raw_transaction_sync_timeout: Option<Duration>,
 }
 
 /// Handle to a launched local node along with the resources required to keep it alive.
@@ -128,6 +131,9 @@ impl LocalNode {
             rpc_args = rpc_args.with_api(selection);
         }
         rpc_args.auth_ipc_path = unique_ipc_path;
+        if let Some(timeout) = options.send_raw_transaction_sync_timeout {
+            rpc_args.rpc_send_raw_transaction_sync_timeout = timeout;
+        }
 
         let eth_node = EthereumNode::default();
 
@@ -154,7 +160,9 @@ impl LocalNode {
             .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
             .with_components(eth_node.components_builder())
             .with_add_ons(EthereumAddOns::new(RpcAddOns::new(
-                EthgasEthApiBuilder::new(pending_state),
+                EthgasEthApiBuilder::new(pending_state).with_send_raw_transaction_sync_timeout(
+                    node_config.rpc.rpc_send_raw_transaction_sync_timeout,
+                ),
                 EthereumEngineValidatorBuilder::default(),
                 BasicEngineApiBuilder::default(),
                 BasicEngineValidatorBuilder::default(),

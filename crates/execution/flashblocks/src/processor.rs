@@ -38,7 +38,7 @@ use tracing::{debug, error, warn};
 use crate::{
     block_assembler::BlockAssembler,
     cache::FlashblockCache,
-    error::{ProviderError, StateProcessorError},
+    error::{ProtocolError, ProviderError, StateProcessorError},
     metrics::Metrics,
     payload::FlashBlock,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
@@ -546,8 +546,12 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
-        let canonical_block = earliest_block_number - 1;
+        // Every build path filters its flashblocks first; an emptied list publishes nothing.
+        let Some((&earliest_block_number, _)) = flashblocks_per_block.first_key_value() else {
+            return Ok(None);
+        };
+        let canonical_block =
+            earliest_block_number.checked_sub(1).ok_or(ProtocolError::GenesisFlashblock)?;
         let mut last_block_header = self
             .client
             .header_by_number(canonical_block)
@@ -582,10 +586,10 @@ where
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
                 .first()
-                .ok_or(crate::error::ProtocolError::EmptyFlashblocks)?
+                .ok_or(ProtocolError::EmptyFlashblocks)?
                 .base
                 .clone()
-                .ok_or(crate::error::ProtocolError::MissingBase)?;
+                .ok_or(ProtocolError::MissingBase)?;
 
             let receipt_by_hash = flashblocks
                 .iter()
@@ -797,5 +801,50 @@ where
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_anchor(anchor);
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicU64;
+
+    use reth_chainspec::MAINNET;
+    use reth_provider::test_utils::MockEthProvider;
+    use tokio::sync::{broadcast, mpsc};
+
+    use super::*;
+    use crate::payload::{ExecutionPayloadBaseV1, Metadata};
+
+    fn processor() -> StateProcessor<MockEthProvider> {
+        let (_updates, rx) = mpsc::unbounded_channel();
+        let (sender, _) = broadcast::channel(1);
+        StateProcessor::new(
+            MockEthProvider::new(),
+            Arc::new(ArcSwapOption::empty()),
+            3,
+            Arc::new(Mutex::new(rx)),
+            MAINNET.clone(),
+            sender,
+            Arc::new(AtomicU64::new(0)),
+        )
+    }
+
+    #[test]
+    fn a_rebuild_without_flashblocks_publishes_nothing() {
+        assert!(processor().build_pending_state(None, &vec![]).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_flashblock_for_block_zero_is_rejected_before_the_anchor_lookup() {
+        let flashblock = FlashBlock {
+            base: Some(ExecutionPayloadBaseV1::default()),
+            metadata: Metadata::default(),
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            processor().build_pending_state(None, &vec![flashblock]),
+            Err(StateProcessorError::Protocol(ProtocolError::GenesisFlashblock))
+        ));
     }
 }

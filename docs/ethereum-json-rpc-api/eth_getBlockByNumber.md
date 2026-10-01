@@ -57,4 +57,5 @@ Returns a block by number or tag.
 **Its `hash` is `0x000…0`.** The node does not compute a hash for an unsealed block, and does not
 publish the producer's. Do not key on it, and do not pass it to `eth_getBlockByHash`.
 
-If no flashblock data is available, `pending` returns the latest confirmed block rather than `null`.
+If no flashblock data is available, `pending` returns the next block when the node has already
+executed it for its consensus client, else the latest confirmed block. It never returns `null`.

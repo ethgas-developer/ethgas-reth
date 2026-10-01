@@ -66,12 +66,15 @@ impl EthgasNodeRunner {
         info!(target: "ethgas-runner", "starting custom Ethgas node");
 
         let ethgas_node = EthereumNode::default();
+        let send_raw_transaction_sync_timeout =
+            builder.config().rpc.rpc_send_raw_transaction_sync_timeout;
 
         let builder = builder
             .with_types_and_provider::<EthereumNode, BlockchainProvider<_>>()
             .with_components(ethgas_node.components_builder())
             .with_add_ons(EthereumAddOns::new(RpcAddOns::new(
-                EthgasEthApiBuilder::new(pending_state),
+                EthgasEthApiBuilder::new(pending_state)
+                    .with_send_raw_transaction_sync_timeout(send_raw_transaction_sync_timeout),
                 EthereumEngineValidatorBuilder::default(),
                 BasicEngineApiBuilder::default(),
                 BasicEngineValidatorBuilder::default(),

@@ -18,6 +18,10 @@ pub enum ProtocolError {
     /// Cannot build from an empty flashblocks collection.
     #[error("empty flashblocks: cannot build state from zero flashblocks")]
     EmptyFlashblocks,
+
+    /// Genesis has no parent state on which to execute a flashblock.
+    #[error("cannot execute a genesis flashblock: block zero has no parent")]
+    GenesisFlashblock,
 }
 
 /// Errors related to state provider and infrastructure operations.
@@ -150,6 +154,10 @@ mod tests {
     #[case::empty_flashblocks(
         ProtocolError::EmptyFlashblocks,
         "empty flashblocks: cannot build state from zero flashblocks"
+    )]
+    #[case::genesis_flashblock(
+        ProtocolError::GenesisFlashblock,
+        "cannot execute a genesis flashblock: block zero has no parent"
     )]
     fn test_protocol_error_display(#[case] error: ProtocolError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);

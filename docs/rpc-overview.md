@@ -34,13 +34,15 @@ block the builder is actually assembling right now.
 | `pending` resolves to | When |
 |---|---|
 | **The flashblock being built** | For the methods marked **Yes** below |
-| **The latest confirmed block** | For everything else that takes a block tag, and whenever no flashblock data is available |
+| **The next block, executed but not yet confirmed** | For those methods whenever no flashblock data is available and the node has already executed the next block for its consensus client |
+| **The latest confirmed block** | For everything else that takes a block tag, and for the methods marked **Yes** whenever neither of the above exists |
 | **An error** | For the three proof methods, which cannot prove pre-confirmed state |
 
 Two guarantees follow, and both are deliberate:
 
 1. **`pending` is never invented from a mempool.** If no flashblock data is available, you get a
-   real block that was actually executed — never a speculative one assembled locally.
+   real block that was actually executed — the next block when the node already holds it, else
+   the latest confirmed block — never a speculative one assembled locally.
 2. **A sealed block always wins.** If the network has already produced the block, you are served
    that block rather than a reconstruction of it.
 
@@ -50,12 +52,19 @@ flashblock, the methods that read account state or execute calls answer `pending
 executed block instead of from the flashblock. The three proof methods answer from it too, instead
 of refusing. `eth_getBlockByNumber`, `eth_getBlockTransactionCountByNumber`,
 `eth_getBlockReceipts`, `eth_getTransactionByBlockNumberAndIndex` and `eth_getLogs` keep describing
-the flashblock. `eth_feeHistory` always uses the latest confirmed block.
+the flashblock. Without flashblock data, they describe that executed block too, so every method
+tells one story. `eth_feeHistory` always uses the latest confirmed block.
 
 Code and storage at `pending`, and balances the builder did not report, come from the node's own
 execution of the flashblock transactions on top of the latest confirmed block. `eth_call`,
 `eth_estimateGas`, `eth_simulateV1` and the call-tracing methods run on that same state, in the
 block environment of the flashblock being built, so they all agree.
+
+One window remains. A call at `pending` reads the pre-confirmed state twice, once for the block
+environment and once for the account state. When the pending block changes between the two reads,
+because the builder started the next block or the node executed or confirmed one, the call runs
+the earlier block environment over the later state. The window is one call wide and opens only at
+a block boundary. Repeat the call if the result must be consistent.
 
 ---
 
@@ -70,7 +79,13 @@ block environment of the flashblock being built, so they all agree.
 
 Methods where this node does something you need to know about have their own page under
 `ethereum-json-rpc-api/`, with parameters, return shape, a worked example and their exact
-`pending` behaviour. The rest behave as they do on any Ethereum node.
+`pending` behaviour. The rest behave as they do on any Ethereum node. With `pending`, an unlisted
+method that takes a block tag answers from the next block when the node has already executed it
+for its consensus client, else from the latest confirmed block; none of them reads the flashblock.
+Two exceptions: `eth_getBlockAccessList` returns `null` for `pending`, and `debug_getRawHeader`,
+`debug_getRawBlock`, `debug_getRawReceipts` and `debug_getRawTransactions` answer from that
+executed block or fail (`debug_getRawTransactions` returns an empty list), never from the latest
+confirmed block.
 
 | Method | Description | Flashblocks `pending` |
 |---|---|:---:|
@@ -116,8 +131,9 @@ Methods where this node does something you need to know about have their own pag
 Submits a transaction and waits for it to appear in a flashblock, then returns its receipt. This is
 the method to use when you want pre-confirmation rather than a transaction hash.
 
-The `timeout_ms` parameter is optional. It defaults to **6000 ms**, which is also the maximum. A
-larger value is rejected with `-32602`.
+The `timeout_ms` parameter is optional. The node clamps it to its configured maximum,
+`--rpc.send-raw-transaction-sync-timeout`, 30 s unless the operator sets it. `0` or absent waits
+that maximum.
 
 ```json
 {

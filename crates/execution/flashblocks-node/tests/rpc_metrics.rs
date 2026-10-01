@@ -6,6 +6,8 @@
 //! before the harness builds the flashblocks state. reth's CLI installs it before it runs the
 //! node command; this test does the same before it launches the node.
 
+use std::time::Duration;
+
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, address, b256, bytes};
 use alloy_provider::Provider;
@@ -18,9 +20,12 @@ use ethgas_reth_flashblocks::payload::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, InclusionFee, Metadata,
 };
 use eyre::Result;
+use futures_util::{SinkExt, StreamExt};
 use reth_ethereum_primitives::Receipt;
 use reth_node_metrics::recorder::install_prometheus_recorder;
-use serde_json::Value;
+use serde_json::{Value, json};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
 /// Alice sends 50 ETH to `TRANSFER_ETH_RECIPIENT` at nonce 0.
 const TRANSFER_ETH_TX: Bytes = bytes!(
@@ -77,6 +82,24 @@ fn base_payload(inclusion_fee: Option<InclusionFee>) -> FlashBlock {
         },
         metadata: Metadata { block_number: 1, receipts, new_account_balances, inclusion_fee },
     }
+}
+
+/// Subscribes to a kind over a raw WebSocket and returns the subscription id.
+async fn ws_subscribe(
+    ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    id: u64,
+    params: Value,
+) -> Result<String> {
+    ws.send(Message::Text(
+        json!({"jsonrpc": "2.0", "id": id, "method": "eth_subscribe", "params": params})
+            .to_string()
+            .into(),
+    ))
+    .await?;
+    let response = ws.next().await.expect("a subscription response")?;
+    let sub: Value = serde_json::from_str(response.to_text()?)?;
+    assert_eq!(sub["id"], id);
+    Ok(sub["result"].as_str().expect("subscription id expected").to_string())
 }
 
 /// Runs `call` and returns how much the `reth_flashblocks_*` counter grew. Other tests in this
@@ -253,6 +276,81 @@ async fn every_flashblocks_path_increments_its_counter() -> Result<()> {
     assert_eq!(
         growth("rpc_inclusion_fee_builder", async {
             provider.get_gas_price().await?;
+            Ok(())
+        })
+        .await,
+        1
+    );
+
+    // `eth_sendRawTransactionSync`: the transfer is in the snapshot already, so the flashblock
+    // counter grows. A transaction no flashblock carries ends with the timeout.
+    assert_eq!(
+        growth("rpc_send_raw_transaction_sync_flashblock", async {
+            client
+                .request::<_, Value>("eth_sendRawTransactionSync", (TRANSFER_ETH_TX, 1_000))
+                .await?;
+            Ok(())
+        })
+        .await,
+        1
+    );
+    let (unknown_tx, _) = Account::Alice
+        .sign_txn_request(
+            TransactionRequest::default()
+                .to(Account::Bob.address())
+                .value(U256::from(1))
+                .gas_limit(21_000)
+                .nonce(7),
+        )
+        .expect("should be able to sign the transfer");
+    assert_eq!(
+        growth("rpc_send_raw_transaction_sync_timeout", async {
+            client
+                .request::<_, Value>("eth_sendRawTransactionSync", (unknown_tx, 50))
+                .await
+                .expect_err("no flashblock carries the transaction");
+            Ok(())
+        })
+        .await,
+        1
+    );
+
+    // Subscriptions count once per kind when they open.
+    let (mut ws, _) = connect_async(&harness.ws_url()).await?;
+    for (id, params, counter) in [
+        (1, json!(["newFlashblocks"]), "subscriptions_new_flashblocks"),
+        (2, json!(["pendingLogs", {}]), "subscriptions_pending_logs"),
+        (3, json!(["newFlashblockTransactions"]), "subscriptions_new_flashblock_transactions"),
+    ] {
+        assert_eq!(
+            growth(counter, async {
+                ws_subscribe(&mut ws, id, params).await?;
+                Ok(())
+            })
+            .await,
+            1,
+            "{counter}"
+        );
+    }
+
+    // A canonical block that carries the transaction ends the wait with the canonical receipt.
+    // The call submits Bob's transfer to the pool; the block built from the pool carries it.
+    let (bob_tx, _) = Account::Bob
+        .sign_txn_request(
+            TransactionRequest::default().to(alice).value(U256::from(1)).gas_limit(21_000).nonce(0),
+        )
+        .expect("should be able to sign the transfer");
+    let genesis_hash = harness.latest_block().hash();
+    let sync_client = client.clone();
+    let sync_call = tokio::spawn(async move {
+        sync_client.request::<_, Value>("eth_sendRawTransactionSync", (bob_tx, 10_000)).await
+    });
+    assert_eq!(
+        growth("rpc_send_raw_transaction_sync_canonical", async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let block = harness.submit_block_from_transactions(vec![]).await?;
+            harness.engine().update_forkchoice(genesis_hash, block, None).await?;
+            sync_call.await??;
             Ok(())
         })
         .await,

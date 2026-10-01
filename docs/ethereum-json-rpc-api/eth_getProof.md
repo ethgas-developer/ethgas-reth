@@ -11,7 +11,7 @@ Returns the Merkle proof of an account and of a set of its storage slots, as def
 | Name | Type | Required | Description |
 |---|---|---|---|
 | `address` | string | yes | The 20-byte account to prove |
-| `storageKeys` | array | yes | The storage slots to prove, as hex quantities. May be empty |
+| `storageKeys` | array | yes | The storage slots to prove, as hex quantities. May be empty. At most 1024; more is refused |
 | `block` | string | no | Block number in hex, or a tag. Defaults to `"latest"` |
 
 ## Returns
@@ -62,3 +62,9 @@ the next block for its consensus client, and that block is at least as new as th
 
 A node that is not connected to a flashblocks producer has no pre-confirmed state, and answers
 `pending` for these three methods as any reth node does.
+
+## At most 1024 storage keys
+
+A request with more than 1024 storage keys is refused with `-32602` and the message
+`too many storage keys: max 1024, got N`, before any trie work. Each key is a Merkle trie walk,
+and an unbounded request could hold the node's executor for seconds. The cap is go-ethereum's.

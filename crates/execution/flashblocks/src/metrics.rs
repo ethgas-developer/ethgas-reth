@@ -148,6 +148,35 @@ pub struct Metrics {
     )]
     pub rpc_get_transaction_by_block_number_and_index: Counter,
 
+    /// `eth_sendRawTransactionSync` calls answered with a flashblock receipt, from the current
+    /// snapshot or from a broadcast.
+    #[metric(
+        describe = "Count of eth_sendRawTransactionSync calls answered with a flashblock receipt"
+    )]
+    pub rpc_send_raw_transaction_sync_flashblock: Counter,
+
+    /// `eth_sendRawTransactionSync` calls answered with a canonical receipt.
+    #[metric(
+        describe = "Count of eth_sendRawTransactionSync calls answered with a canonical receipt"
+    )]
+    pub rpc_send_raw_transaction_sync_canonical: Counter,
+
+    /// `eth_sendRawTransactionSync` calls that ended without a receipt.
+    #[metric(describe = "Count of eth_sendRawTransactionSync calls that timed out")]
+    pub rpc_send_raw_transaction_sync_timeout: Counter,
+
+    /// `newFlashblocks` subscriptions opened.
+    #[metric(describe = "Count of newFlashblocks subscriptions opened")]
+    pub subscriptions_new_flashblocks: Counter,
+
+    /// `pendingLogs` subscriptions opened.
+    #[metric(describe = "Count of pendingLogs subscriptions opened")]
+    pub subscriptions_pending_logs: Counter,
+
+    /// `newFlashblockTransactions` subscriptions opened, in any parameter form.
+    #[metric(describe = "Count of newFlashblockTransactions subscriptions opened")]
+    pub subscriptions_new_flashblock_transactions: Counter,
+
     /// Time taken to clone bundle state.
     #[metric(describe = "Time taken to clone bundle state")]
     pub bundle_state_clone_duration: Histogram,

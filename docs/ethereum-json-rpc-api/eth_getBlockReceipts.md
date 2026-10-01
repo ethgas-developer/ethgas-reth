@@ -60,4 +60,5 @@ transactions that `eth_getBlockByNumber("pending")` lists, in the same order.
 A pre-confirmed receipt carries `blockHash: 0x000…0`, because the block has no hash yet. It is not
 proof of inclusion; see [`eth_getTransactionReceipt`](./eth_getTransactionReceipt.md).
 
-Without flashblock data, `pending` returns the receipts of the latest confirmed block.
+Without flashblock data, `pending` returns the receipts of the next block when the node has
+already executed it for its consensus client, else of the latest confirmed block.

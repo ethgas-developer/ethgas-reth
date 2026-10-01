@@ -15,15 +15,19 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_provider::{CanonStateSubscriptions, StateProvider};
+use jsonrpsee_types::ErrorObjectOwned;
+use reth_primitives_traits::NodePrimitives;
+use reth_provider::{CanonStateNotifications, CanonStateSubscriptions, StateProvider};
 use reth_rpc::EthFilter;
 use reth_rpc_eth_api::{
     EthApiTypes, EthFilterApiServer, FromEthApiError, RpcBlock, RpcReceipt, RpcTransaction,
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi, LoadState},
 };
 use reth_rpc_eth_types::EthApiError;
-use tokio::{sync::broadcast::error::RecvError, time};
+use tokio::{
+    sync::broadcast::{self, error::RecvError},
+    time,
+};
 use tokio_stream::{
     StreamExt,
     wrappers::{BroadcastStream, errors::BroadcastStreamRecvError},
@@ -32,11 +36,9 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     metrics::Metrics,
+    pending_blocks::PendingBlocks,
     traits::{FlashblocksAPI, PendingBlocksAPI},
 };
-
-/// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
-const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
 
 /// Eth API override trait for flashblocks integration.
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -174,19 +176,17 @@ where
             block_number = ?number
         );
 
+        // Without a snapshot, `pending` resolves through the node's `eth` API: the block the
+        // engine has executed but not yet made canonical, else the latest block.
         if number.is_pending() {
             self.metrics.rpc_get_block_by_number.increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
             if pending_blocks.as_ref().is_some() {
                 return Ok(pending_blocks.get_block(full));
             }
-            // No pending state available — treat `pending` as `latest`
-            EthBlocks::rpc_block(&self.eth_api, BlockNumberOrTag::Latest.into(), full)
-                .await
-                .map_err(Into::into)
-        } else {
-            EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
         }
+
+        EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
     }
 
     async fn get_transaction_receipt(
@@ -304,19 +304,19 @@ where
     ) -> RpcResult<RpcReceipt<Ethereum>> {
         debug!(message = "rpc::send_raw_transaction_sync");
 
-        let timeout_ms = match timeout_ms {
-            Some(ms) if ms > MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS => {
-                return Err(ErrorObjectOwned::owned(
-                    INVALID_PARAMS_CODE,
-                    format!(
-                        "time out too long, timeout: {ms} ms, max: {MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS} ms"
-                    ),
-                    None::<()>,
-                ));
-            }
-            Some(ms) => ms,
-            _ => MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS,
-        };
+        // A positive timeout shortens the configured one and never extends it. Zero or none is
+        // the configured value, `--rpc.send-raw-transaction-sync-timeout`.
+        let configured = EthTransactions::send_raw_transaction_sync_timeout(&self.eth_api);
+        let timeout = timeout_ms
+            .filter(|timeout_ms| *timeout_ms > 0)
+            .map(Duration::from_millis)
+            .map(|timeout| timeout.min(configured))
+            .unwrap_or(configured);
+
+        // Both receivers are taken before submission, so a snapshot or a canonical block that
+        // lands while the pool accepts the transaction is not missed.
+        let flashblocks = self.flashblocks_state.subscribe_to_flashblocks();
+        let canonical = self.eth_api.provider().subscribe_to_canonical_state();
 
         let tx_hash = match EthTransactions::send_raw_transaction(&self.eth_api, transaction).await
         {
@@ -327,30 +327,31 @@ where
         debug!(
             message = "rpc::send_raw_transaction_sync::sent_transaction",
             tx_hash = %tx_hash,
-            timeout_ms = timeout_ms,
+            timeout = ?timeout,
         );
 
-        let timeout = Duration::from_millis(timeout_ms);
+        // The builder may hold the transaction already. Its receipt is then in the current
+        // snapshot, and the wait below would end only with the next broadcast.
+        if let Some(receipt) =
+            self.flashblocks_state.get_pending_blocks().get_transaction_receipt(tx_hash)
+        {
+            debug!(message = "found receipt in the current snapshot", tx_hash = %tx_hash);
+            self.metrics.rpc_send_raw_transaction_sync_flashblock.increment(1);
+            return Ok(receipt);
+        }
 
         tokio::select! {
-            receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
-                receipt.ok_or_else(|| EthApiError::TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: timeout,
-                }.into())
+            receipt = self.wait_for_flashblocks_receipt(flashblocks, tx_hash) => {
+                let receipt = receipt.ok_or_else(|| self.confirmation_timeout(tx_hash, timeout))?;
+                self.metrics.rpc_send_raw_transaction_sync_flashblock.increment(1);
+                Ok(receipt)
             }
-            receipt = self.wait_for_canonical_receipt(tx_hash) => {
-                receipt.ok_or_else(|| EthApiError::TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: timeout,
-                }.into())
+            receipt = self.wait_for_canonical_receipt(canonical, tx_hash) => {
+                let receipt = receipt.ok_or_else(|| self.confirmation_timeout(tx_hash, timeout))?;
+                self.metrics.rpc_send_raw_transaction_sync_canonical.increment(1);
+                Ok(receipt)
             }
-            _ = time::sleep(timeout) => {
-               Err(EthApiError::TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: timeout,
-                }.into())
-            }
+            _ = time::sleep(timeout) => Err(self.confirmation_timeout(tx_hash, timeout)),
         }
     }
 
@@ -462,6 +463,9 @@ where
         let mut all_logs = Vec::new();
 
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        if pending_blocks.is_none() {
+            return self.eth_filter.logs(filter).await;
+        }
 
         let mut fetched_logs = HashSet::new();
         // Get historical logs if fromBlock is not pending
@@ -511,14 +515,6 @@ where
                 let count = block.transactions.len();
                 return Ok(Some(U256::from(count)));
             }
-            // No pending state available — treat `pending` as `latest`
-            return EthBlocks::block_transaction_count(
-                &self.eth_api,
-                BlockNumberOrTag::Latest.into(),
-            )
-            .await
-            .map(|opt| opt.map(U256::from))
-            .map_err(Into::into);
         }
 
         EthBlocks::block_transaction_count(&self.eth_api, number.into())
@@ -539,10 +535,6 @@ where
             {
                 return Ok(Some(receipts));
             }
-            // No pending state available — treat `pending` as `latest`
-            return EthBlocks::block_receipts(&self.eth_api, BlockNumberOrTag::Latest.into())
-                .await
-                .map_err(Into::into);
         }
 
         EthBlocks::block_receipts(&self.eth_api, block_id).await.map_err(Into::into)
@@ -565,14 +557,6 @@ where
             if pending_blocks.as_ref().is_some() {
                 return Ok(pending_blocks.get_transaction_by_index(index.into()));
             }
-            // No pending state available — treat `pending` as `latest`
-            return EthTransactions::transaction_by_block_and_tx_index(
-                &self.eth_api,
-                BlockNumberOrTag::Latest.into(),
-                index.into(),
-            )
-            .await
-            .map_err(Into::into);
         }
 
         EthTransactions::transaction_by_block_and_tx_index(
@@ -590,9 +574,17 @@ where
     Eth: FullEthApi<NetworkTypes = Ethereum> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
-    async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Ethereum>> {
-        let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
+    /// Counts a wait that ended without a receipt, and builds its error.
+    fn confirmation_timeout(&self, tx_hash: TxHash, timeout: Duration) -> ErrorObjectOwned {
+        self.metrics.rpc_send_raw_transaction_sync_timeout.increment(1);
+        EthApiError::TransactionConfirmationTimeout { hash: tx_hash, duration: timeout }.into()
+    }
 
+    async fn wait_for_flashblocks_receipt(
+        &self,
+        mut receiver: broadcast::Receiver<Arc<PendingBlocks>>,
+        tx_hash: TxHash,
+    ) -> Option<RpcReceipt<Ethereum>> {
         loop {
             match receiver.recv().await {
                 Ok(pending_state) if pending_state.get_receipt(tx_hash).is_some() => {
@@ -613,9 +605,12 @@ where
         }
     }
 
-    async fn wait_for_canonical_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Ethereum>> {
-        let mut stream =
-            BroadcastStream::new(self.eth_api.provider().subscribe_to_canonical_state());
+    async fn wait_for_canonical_receipt<N: NodePrimitives>(
+        &self,
+        receiver: CanonStateNotifications<N>,
+        tx_hash: TxHash,
+    ) -> Option<RpcReceipt<Ethereum>> {
+        let mut stream = BroadcastStream::new(receiver);
 
         while let Some(result) = stream.next().await {
             let canon_state = match result {

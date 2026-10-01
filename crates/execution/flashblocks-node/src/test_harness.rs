@@ -264,6 +264,16 @@ impl FlashblocksHarness {
         Self::with_options(false, options).await
     }
 
+    /// Launch the harness with `--rpc.send-raw-transaction-sync-timeout` set: the longest
+    /// `eth_sendRawTransactionSync` waits, which a requested timeout is clamped to.
+    pub async fn with_send_raw_transaction_sync_timeout(timeout: Duration) -> Result<Self> {
+        let options = LocalNodeOptions {
+            send_raw_transaction_sync_timeout: Some(timeout),
+            ..Default::default()
+        };
+        Self::with_options(true, options).await
+    }
+
     /// Get a handle to the in-memory Flashblocks state backing the harness.
     pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
@@ -555,7 +565,7 @@ impl<'a> FlashblockBuilder<'a> {
             self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
 
         let base = (self.index == 0).then(|| ExecutionPayloadBaseV1 {
-            parent_beacon_block_root: current_block.hash(),
+            parent_beacon_block_root: current_block.parent_beacon_block_root.unwrap_or_default(),
             parent_hash: current_block.hash(),
             fee_recipient: Address::random(),
             prev_randao: B256::random(),

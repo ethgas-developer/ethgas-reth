@@ -42,8 +42,8 @@ pub use subscription::FlashblocksSubscriber;
 
 pub mod validation;
 pub use validation::{
-    CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
-    ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
+    CanonicalBlockOracle, CanonicalBlockReconciler, CanonicalMismatch, FlashblockSequenceValidator,
+    ReconciliationStrategy, ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
 };
 
 pub mod rpc;

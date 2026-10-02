@@ -2,6 +2,7 @@
 //!
 //! Provides stateless validation logic for flashblock sequencing and chain reorg detection.
 
+use alloy_consensus::Header;
 use alloy_primitives::B256;
 
 /// Result of validating a flashblock's position in the sequence.
@@ -150,6 +151,58 @@ impl ReorgDetector {
                 canonical_count: canonical_tx_hashes.len(),
             }
         }
+    }
+}
+
+/// A check on which the header pending assembled for a block disagreed with the canonical header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalMismatch {
+    /// The withdrawals roots differ.
+    WithdrawalsRoot,
+    /// The requests hashes differ, and pending's commits to the producer's requests list.
+    RequestsHash,
+    /// The slot numbers differ.
+    SlotNumber,
+    /// Canonical's transactions do not start with pending's.
+    TransactionPrefix,
+}
+
+/// Compares the header pending assembled for a block with the canonical header of that block.
+///
+/// The block hash, the state root and the gas used cannot match: the builder seals the block with
+/// a payout transaction that no flashblock carries. The fields below come from the flashblocks
+/// alone, and the payout makes canonical's transactions a superset of pending's by suffix only.
+/// Pending carries no block access list hash, so that field is not compared.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CanonicalBlockOracle;
+
+impl CanonicalBlockOracle {
+    /// Returns every check `pending` fails against `canonical`.
+    ///
+    /// `requests_from_producer` says whether pending's requests hash commits to the producer's
+    /// list; the fallback derivation sees deposits only, so it is not compared. `reorg` is
+    /// [`ReorgDetector::detect`]'s verdict on the same block, so the prefix check and the reorg
+    /// classification cannot disagree.
+    pub fn compare(
+        pending: &Header,
+        canonical: &Header,
+        requests_from_producer: bool,
+        reorg: &ReorgDetectionResult,
+    ) -> Vec<CanonicalMismatch> {
+        let mut mismatches = Vec::new();
+        if pending.withdrawals_root != canonical.withdrawals_root {
+            mismatches.push(CanonicalMismatch::WithdrawalsRoot);
+        }
+        if requests_from_producer && pending.requests_hash != canonical.requests_hash {
+            mismatches.push(CanonicalMismatch::RequestsHash);
+        }
+        if pending.slot_number != canonical.slot_number {
+            mismatches.push(CanonicalMismatch::SlotNumber);
+        }
+        if reorg.is_reorg() {
+            mismatches.push(CanonicalMismatch::TransactionPrefix);
+        }
+        mismatches
     }
 }
 
@@ -350,5 +403,78 @@ mod tests {
         let result =
             CanonicalBlockReconciler::reconcile(earliest, latest, canonical, max_depth, reorg);
         assert_eq!(result, expected);
+    }
+
+    // ==================== CanonicalBlockOracle Tests ====================
+
+    /// A canonical header, and a pending header that differs from it only where the payout
+    /// transaction lands: the state root and the gas used.
+    fn agreeing_headers() -> (Header, Header) {
+        let canonical = Header {
+            number: 7,
+            withdrawals_root: Some(B256::repeat_byte(0x11)),
+            requests_hash: Some(B256::repeat_byte(0x22)),
+            slot_number: Some(33),
+            state_root: B256::repeat_byte(0x44),
+            gas_used: 50_000,
+            ..Default::default()
+        };
+        let pending =
+            Header { state_root: B256::repeat_byte(0x55), gas_used: 21_000, ..canonical.clone() };
+        (pending, canonical)
+    }
+
+    const EXTENDED: ReorgDetectionResult =
+        ReorgDetectionResult::CanonicalExtendsTracked { tracked_count: 1, canonical_count: 2 };
+
+    #[test]
+    fn the_oracle_passes_a_pending_header_that_differs_only_where_the_payout_lands() {
+        let (pending, canonical) = agreeing_headers();
+        assert_eq!(CanonicalBlockOracle::compare(&pending, &canonical, true, &EXTENDED), vec![]);
+    }
+
+    #[rstest]
+    #[case::withdrawals_root(
+        |header: &mut Header| header.withdrawals_root = Some(B256::ZERO),
+        CanonicalMismatch::WithdrawalsRoot
+    )]
+    #[case::requests_hash(
+        |header: &mut Header| header.requests_hash = Some(B256::ZERO),
+        CanonicalMismatch::RequestsHash
+    )]
+    #[case::slot_number(|header: &mut Header| header.slot_number = None, CanonicalMismatch::SlotNumber)]
+    fn the_oracle_reports_a_field_that_differs(
+        #[case] diverge: fn(&mut Header),
+        #[case] expected: CanonicalMismatch,
+    ) {
+        let (mut pending, canonical) = agreeing_headers();
+        diverge(&mut pending);
+        assert_eq!(
+            CanonicalBlockOracle::compare(&pending, &canonical, true, &EXTENDED),
+            vec![expected]
+        );
+    }
+
+    #[test]
+    fn the_oracle_skips_a_requests_hash_the_producer_did_not_send() {
+        let (mut pending, canonical) = agreeing_headers();
+        pending.requests_hash = Some(B256::ZERO);
+        assert_eq!(CanonicalBlockOracle::compare(&pending, &canonical, false, &EXTENDED), vec![]);
+    }
+
+    #[rstest]
+    #[case(ReorgDetectionResult::NoReorg, vec![])]
+    #[case(ReorgDetectionResult::Untracked { canonical_count: 1 }, vec![])]
+    #[case(EXTENDED, vec![])]
+    #[case(
+        ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 1 },
+        vec![CanonicalMismatch::TransactionPrefix]
+    )]
+    fn the_oracle_takes_the_prefix_check_from_the_reorg_verdict(
+        #[case] reorg: ReorgDetectionResult,
+        #[case] expected: Vec<CanonicalMismatch>,
+    ) {
+        let (pending, canonical) = agreeing_headers();
+        assert_eq!(CanonicalBlockOracle::compare(&pending, &canonical, true, &reorg), expected);
     }
 }

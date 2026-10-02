@@ -182,6 +182,7 @@ impl PendingBlocksBuilder {
         Ok(PendingBlocks {
             earliest_header,
             latest_header,
+            headers: self.headers,
             latest_flashblock_index,
             flashblocks: self.flashblocks,
             transactions: self.transactions,
@@ -201,6 +202,8 @@ impl PendingBlocksBuilder {
 pub struct PendingBlocks {
     earliest_header: Sealed<Header>,
     latest_header: Sealed<Header>,
+    /// One header per pending block, in block order.
+    headers: Vec<Sealed<Header>>,
     latest_flashblock_index: u64,
     flashblocks: Vec<FlashBlock>,
     transactions: Vec<Transaction>,
@@ -265,6 +268,11 @@ impl PendingBlocks {
     #[inline]
     pub fn latest_header(&self) -> Sealed<Header> {
         self.latest_header.clone()
+    }
+
+    /// Returns the header assembled for `block_number`, if pending covers that block.
+    pub fn header_for_block(&self, block_number: BlockNumber) -> Option<&Sealed<Header>> {
+        self.headers.iter().find(|header| header.number == block_number)
     }
 
     /// Returns all flashblocks.
@@ -652,6 +660,29 @@ mod tests {
             err,
             StateProcessorError::Build(BuildError::DuplicateTransaction { tx_hash: hash })
         );
+    }
+
+    #[test]
+    fn every_pending_block_keeps_its_own_header() {
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        for number in [1, 2] {
+            builder.with_header(Sealed::new_unchecked(
+                Header { number, ..Default::default() },
+                B256::with_last_byte(number as u8),
+            ));
+        }
+        let pending = builder.build().expect("build should succeed");
+
+        assert_eq!(
+            pending.header_for_block(1).map(|header| header.hash()),
+            Some(B256::with_last_byte(1))
+        );
+        assert_eq!(
+            pending.header_for_block(2).map(|header| header.hash()),
+            Some(B256::with_last_byte(2))
+        );
+        assert!(pending.header_for_block(3).is_none());
     }
 
     fn receipt_with_log(tx_hash: B256, log_address: Address) -> TransactionReceipt {

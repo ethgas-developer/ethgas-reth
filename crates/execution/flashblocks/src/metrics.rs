@@ -95,6 +95,27 @@ pub struct Metrics {
     )]
     pub pending_drop_stale: Counter,
 
+    /// Canonical blocks whose withdrawals root differed from the one pending assembled.
+    #[metric(
+        describe = "Count of canonical blocks whose withdrawals root differed from pending's"
+    )]
+    pub pending_withdrawals_root_mismatch: Counter,
+
+    /// Canonical blocks whose requests hash differed from pending's, where pending's came from the
+    /// producer's requests list.
+    #[metric(describe = "Count of canonical blocks whose requests hash differed from pending's")]
+    pub pending_requests_hash_mismatch: Counter,
+
+    /// Canonical blocks whose slot number differed from pending's.
+    #[metric(describe = "Count of canonical blocks whose slot number differed from pending's")]
+    pub pending_slot_number_mismatch: Counter,
+
+    /// Canonical blocks whose transactions did not start with the ones pending held.
+    #[metric(
+        describe = "Count of canonical blocks whose transactions did not start with pending's"
+    )]
+    pub pending_tx_prefix_violation: Counter,
+
     /// Pending snapshot flashblock index (current).
     #[metric(describe = "Pending snapshot flashblock index (current)")]
     pub pending_snapshot_fb_index: Gauge,

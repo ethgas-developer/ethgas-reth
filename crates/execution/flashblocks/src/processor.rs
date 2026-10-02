@@ -44,8 +44,9 @@ use crate::{
     payload::FlashBlock,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
     validation::{
-        CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
-        ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
+        CanonicalBlockOracle, CanonicalBlockReconciler, CanonicalMismatch,
+        FlashblockSequenceValidator, ReconciliationStrategy, ReorgDetectionResult, ReorgDetector,
+        SequenceValidationResult,
     },
 };
 
@@ -360,6 +361,8 @@ where
             block.body().transactions().map(|tx| *tx.tx_hash()).collect();
 
         let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
+        // Before the strategy, which discards the verdict once canonical catches up.
+        self.compare_with_canonical(pending_blocks, &flashblocks, block, &reorg_result);
         // Anything short of an exact match must rebuild from canonical.
         let requires_rebuild = reorg_result.requires_rebuild();
 
@@ -454,6 +457,46 @@ where
                 debug!(message = "no pending state to update with canonical block, skipping");
                 Ok(None)
             }
+        }
+    }
+
+    /// Counts and logs every check on which the header pending assembled for `block` fails
+    /// against it. Diagnostics only: pending state is reconciled as before.
+    fn compare_with_canonical(
+        &self,
+        pending_blocks: &PendingBlocks,
+        flashblocks: &[FlashBlock],
+        block: &RecoveredBlock<Block>,
+        reorg_result: &ReorgDetectionResult,
+    ) {
+        let Some(pending_header) = pending_blocks.header_for_block(block.number) else { return };
+        // The block's latest flashblock decides where its requests hash came from.
+        let requests_from_producer = flashblocks
+            .iter()
+            .rev()
+            .find(|flashblock| flashblock.metadata.block_number == block.number)
+            .is_some_and(|flashblock| flashblock.diff.requests.is_some());
+
+        for mismatch in CanonicalBlockOracle::compare(
+            pending_header,
+            block.header(),
+            requests_from_producer,
+            reorg_result,
+        ) {
+            let counter = match mismatch {
+                CanonicalMismatch::WithdrawalsRoot => {
+                    &self.metrics.pending_withdrawals_root_mismatch
+                }
+                CanonicalMismatch::RequestsHash => &self.metrics.pending_requests_hash_mismatch,
+                CanonicalMismatch::SlotNumber => &self.metrics.pending_slot_number_mismatch,
+                CanonicalMismatch::TransactionPrefix => &self.metrics.pending_tx_prefix_violation,
+            };
+            counter.increment(1);
+            warn!(
+                message = "pending block disagrees with the canonical block",
+                block_number = block.number,
+                ?mismatch,
+            );
         }
     }
 

@@ -47,6 +47,9 @@ Two guarantees follow, and both are deliberate:
 2. **A sealed block always wins.** If the network has already produced the block, you are served
    that block rather than a reconstruction of it.
 
+Flashblock data the node cannot use counts as no data. After the Amsterdam fork, the builder must
+send each block's slot number, and the node does not serve a block whose flashblocks lack it.
+
 The second guarantee has one visible effect. When the node has executed the next block for its
 consensus client but has not yet made it canonical, and that block is at least as new as the
 flashblock, the methods that read account state or execute calls answer `pending` from that
@@ -83,7 +86,8 @@ On a chain where Amsterdam is active, the pending block follows the fork in thes
 | `SLOTNUM` in `eth_simulateV1` | The latest confirmed block's slot plus one per simulated block |
 | `eth_getBlockAccessList` | `null` |
 
-See [`eth_getBlockByNumber`](./ethereum-json-rpc-api/eth_getBlockByNumber.md) and
+The node serves no flashblock state for a block whose flashblocks carry no slot number. See
+[`eth_getBlockByNumber`](./ethereum-json-rpc-api/eth_getBlockByNumber.md) and
 [`eth_simulateV1`](./flashblocks-api/eth_simulateV1.md).
 
 ---

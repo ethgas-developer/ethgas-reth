@@ -1,6 +1,6 @@
 //! Pending state on a chain where Amsterdam is active from genesis: the slot number the producer
 //! sends reaches the pending header, the execution of flashblock transactions and calls at
-//! `pending`.
+//! `pending`, and a base payload without one is not served.
 
 use std::{sync::Arc, time::Duration};
 
@@ -50,6 +50,22 @@ async fn the_pending_header_carries_the_slot_and_no_block_access_list_hash() -> 
     assert_eq!(block["number"], "0x1");
     assert_eq!(block["slotNumber"], format!("{FIRST_BLOCK_SLOT:#x}"));
     assert!(block.get("blockAccessListHash").is_none(), "{block}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_base_payload_without_a_slot_is_not_served() -> Result<()> {
+    let harness = amsterdam_harness().await;
+    let mut snapshots = harness.flashblocks.subscribe_to_flashblocks();
+
+    let mut without_slot = FlashblockBuilder::new_base(&harness).build();
+    without_slot.base.as_mut().expect("a base payload").slot_number = None;
+    harness.send_flashblock(without_slot).await;
+    harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
+
+    // The processor publishes in order, so the first snapshot shows which base it built first.
+    let first = timeout(Duration::from_secs(5), snapshots.recv()).await??;
+    assert_eq!(first.latest_header().slot_number, Some(FIRST_BLOCK_SLOT));
     Ok(())
 }
 

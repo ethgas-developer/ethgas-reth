@@ -55,6 +55,7 @@ impl BlockAssembler {
     /// - The flashblocks slice is empty
     /// - The first flashblock is missing its base payload
     /// - The base payload names block zero, which has no parent state
+    /// - The block is an Amsterdam block and its base payload carries no slot number
     /// - The producer sent no requests list and a transaction in the block has no receipt on the
     ///   wire
     /// - Block conversion fails
@@ -66,6 +67,9 @@ impl BlockAssembler {
         let base = first.base.clone().ok_or(ProtocolError::MissingBase)?;
         if base.block_number == 0 {
             return Err(ProtocolError::GenesisFlashblock.into());
+        }
+        if spec.is_amsterdam_active_at_timestamp(base.timestamp) && base.slot_number.is_none() {
+            return Err(ProtocolError::MissingSlotNumber { block_number: base.block_number }.into());
         }
         let latest_flashblock = flashblocks.last().ok_or(ProtocolError::EmptyFlashblocks)?;
 
@@ -422,6 +426,16 @@ mod tests {
         assert!(matches!(
             BlockAssembler::assemble(&test_spec(), &[flashblock]),
             Err(StateProcessorError::Protocol(ProtocolError::GenesisFlashblock))
+        ));
+    }
+
+    #[test]
+    fn assemble_rejects_an_amsterdam_base_payload_without_a_slot_number() {
+        assert!(matches!(
+            BlockAssembler::assemble(&amsterdam_spec(), &[create_test_flashblock(0, true)]),
+            Err(StateProcessorError::Protocol(ProtocolError::MissingSlotNumber {
+                block_number: 100
+            }))
         ));
     }
 

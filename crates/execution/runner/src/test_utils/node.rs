@@ -23,7 +23,7 @@ use reth_node_ethereum::{
     EthereumNode,
     node::{EthereumAddOns, EthereumEngineValidatorBuilder},
 };
-use reth_provider::providers::BlockchainProvider;
+use reth_provider::{ChainSpecProvider, providers::BlockchainProvider};
 
 use crate::{
     EthgasNodeExtension, NodeHooks, PendingStateSource, eth_api::EthgasEthApiBuilder,
@@ -224,7 +224,7 @@ impl LocalNode {
 
     /// Build an Engine API client.
     pub fn engine_api(&self) -> Result<EngineApi> {
-        EngineApi::new(self.engine_ipc_path.clone())
+        EngineApi::new(self.engine_ipc_path.clone(), self.provider.chain_spec())
     }
 
     /// Clone the underlying blockchain provider.

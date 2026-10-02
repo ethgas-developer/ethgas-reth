@@ -550,6 +550,59 @@ mod tests {
         );
     }
 
+    /// Two flashblocks of one block, written by hand in the producer's wire format: an
+    /// Amsterdam producer's, and one from a producer that predates the Amsterdam fields.
+    const AMSTERDAM_FIXTURE: &str = include_str!("../tests/assets/flashblock_amsterdam.json");
+    const PRAGUE_FIXTURE: &str = include_str!("../tests/assets/flashblock_prague.json");
+
+    fn fixture_messages(fixture: &str) -> Vec<serde_json::Value> {
+        serde_json::from_str(fixture).expect("a fixture is a JSON list of messages")
+    }
+
+    /// The decoder reads every key the producer sends and loses nothing: encoding what it
+    /// decoded gives the message back.
+    #[test]
+    fn the_amsterdam_fixture_round_trips() {
+        for message in fixture_messages(AMSTERDAM_FIXTURE) {
+            let (flashblock, shape) =
+                parse_flashblock_json(&message.to_string()).expect("accepted");
+            assert_eq!(shape, WireShape::default());
+
+            let encoded = serde_json::to_value(FlashblocksPayloadV1 {
+                payload_id: flashblock.payload_id,
+                index: flashblock.index,
+                base: flashblock.base,
+                diff: flashblock.diff,
+                metadata: serde_json::to_value(flashblock.metadata).expect("metadata serializes"),
+            })
+            .expect("a payload serializes");
+            assert_eq!(encoded, message);
+        }
+    }
+
+    #[test]
+    fn the_prague_fixture_decodes_without_the_amsterdam_fields() {
+        for message in fixture_messages(PRAGUE_FIXTURE) {
+            let (flashblock, shape) =
+                parse_flashblock_json(&message.to_string()).expect("accepted");
+            assert_eq!(flashblock.base.as_ref().and_then(|base| base.slot_number), None);
+            assert_eq!(flashblock.diff.requests, None);
+            assert_eq!(shape.base_without_slot_number, flashblock.base.is_some());
+            assert!(shape.diff_without_requests);
+            assert!(shape.unknown_keys.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_field_the_node_does_not_read_is_reported_not_refused() {
+        let mut message = fixture_messages(AMSTERDAM_FIXTURE).remove(0);
+        message["diff"]["block_access_list_hash"] = serde_json::json!(B256::ZERO);
+
+        let (flashblock, shape) = parse_flashblock_json(&message.to_string()).expect("accepted");
+        assert_eq!(flashblock.base.expect("a base payload").slot_number, Some(0x1a2b));
+        assert_eq!(shape.unknown_keys, ["diff.block_access_list_hash"]);
+    }
+
     #[test]
     fn the_shape_says_which_amsterdam_fields_a_flashblock_lacks() {
         let (_, old) = parse_flashblock_json(&pre_amsterdam_flashblock().to_string()).unwrap();

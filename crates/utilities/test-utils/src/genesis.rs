@@ -23,12 +23,23 @@ pub const fn slot_number_at(timestamp: u64) -> u64 {
     timestamp + SLOT_NUMBER_OFFSET
 }
 
-/// Builds a test genesis configuration programmatically.
-///
-/// Creates an Ethereum genesis with:
-/// - All EVM hardforks enabled from genesis (including Prague)
-/// - Pre-funded test accounts from the `Account` enum
+/// Builds the test genesis: every fork through Amsterdam active from genesis, and the accounts of
+/// the `Account` enum funded.
 pub fn build_test_genesis() -> Genesis {
+    build_test_genesis_with_amsterdam_at(Some(0))
+}
+
+/// [`build_test_genesis`] with Osaka at genesis and Amsterdam at `amsterdam_time`: `Some(0)` at
+/// genesis, a later timestamp to fork while a test runs, `None` never.
+pub fn build_test_genesis_with_amsterdam_at(amsterdam_time: Option<u64>) -> Genesis {
+    let mut genesis = build_prague_test_genesis();
+    genesis.config.osaka_time = Some(0);
+    genesis.config.amsterdam_time = amsterdam_time;
+    genesis
+}
+
+/// The test genesis with Prague as its newest fork, for the engine methods Osaka retired.
+pub fn build_prague_test_genesis() -> Genesis {
     // Test account balance: 1 million ETH
     let test_account_balance: U256 = parse_ether("1000000").expect("valid ether amount");
 

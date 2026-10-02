@@ -2,27 +2,27 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_eips::{BlockHashOrNumber, eip7685::RequestsOrHash};
+use alloy_eips::{BlockHashOrNumber, eip4895::Withdrawal};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use eyre::{Result, eyre};
-use reth_chainspec::{ChainSpec, ChainSpecProvider};
+use reth_chainspec::{ChainSpec, ChainSpecProvider, EthereumHardforks};
 use reth_ethereum_primitives::Block;
 use reth_network_p2p::sync::SyncState;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use reth_provider::{BlockNumReader, BlockReader, DatabaseProviderFactory};
 use tokio::time::sleep;
 
-use ethgas_test_utils::build_test_genesis;
+use ethgas_test_utils::{build_test_genesis, slot_number_at};
 
 use crate::{
     EthgasNodeExtension, FromExtensionConfig, PendingStateSource,
     test_utils::{
         constants::{BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, NODE_STARTUP_DELAY_MS},
-        engine::EngineApi,
+        engine::{EngineApi, EnginePayload},
         node::{LocalNode, LocalNodeOptions, LocalNodeProvider},
         tracing::init_silenced_tracing,
     },
@@ -202,18 +202,34 @@ impl TestHarness {
     /// Transactions are submitted to the node's transaction pool before triggering
     /// the engine to build a block that will include them.
     pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
-        let SubmittedBlock { parent_hash, hash } = self.submit_block(transactions).await?;
-        self.engine.update_forkchoice(parent_hash, hash, None).await?;
+        self.build_block_with_withdrawals(transactions, vec![]).await?;
         Ok(())
+    }
+
+    /// Like [`Self::build_block_from_transactions`], with `withdrawals` in the payload
+    /// attributes. Returns the payload the engine built, which the block is made from.
+    pub async fn build_block_with_withdrawals(
+        &self,
+        transactions: Vec<Bytes>,
+        withdrawals: Vec<Withdrawal>,
+    ) -> Result<EnginePayload> {
+        let SubmittedBlock { parent_hash, hash, payload } =
+            self.submit_block(transactions, withdrawals).await?;
+        self.engine.update_forkchoice(parent_hash, hash, None).await?;
+        Ok(payload)
     }
 
     /// Like [`Self::build_block_from_transactions`] without the forkchoice update: the engine
     /// executes the block and holds it as pending. Returns the block hash.
     pub async fn submit_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<B256> {
-        Ok(self.submit_block(transactions).await?.hash)
+        Ok(self.submit_block(transactions, vec![]).await?.hash)
     }
 
-    async fn submit_block(&self, transactions: Vec<Bytes>) -> Result<SubmittedBlock> {
+    async fn submit_block(
+        &self,
+        transactions: Vec<Bytes>,
+        withdrawals: Vec<Withdrawal>,
+    ) -> Result<SubmittedBlock> {
         // Submit transactions to the mempool so the payload builder picks them up.
         let provider = self.provider();
         for tx in &transactions {
@@ -234,7 +250,11 @@ impl TestHarness {
         let payload_attributes = PayloadAttributes {
             timestamp: next_timestamp,
             parent_beacon_block_root: Some(parent_beacon_block_root),
-            withdrawals: Some(vec![]),
+            withdrawals: Some(withdrawals),
+            slot_number: self
+                .chain_spec()
+                .is_amsterdam_active_at_timestamp(next_timestamp)
+                .then(|| slot_number_at(next_timestamp)),
             ..Default::default()
         };
 
@@ -249,19 +269,9 @@ impl TestHarness {
 
         sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
-        let payload_envelope = self.engine.get_payload(payload_id).await?;
-
-        let execution_requests = RequestsOrHash::Requests(payload_envelope.execution_requests);
-
-        let payload_status = self
-            .engine
-            .new_payload(
-                payload_envelope.envelope_inner.execution_payload,
-                vec![],
-                parent_beacon_block_root,
-                execution_requests,
-            )
-            .await?;
+        let payload = self.engine.get_payload(payload_id, next_timestamp).await?;
+        let payload_status =
+            self.engine.new_payload(payload.clone(), parent_beacon_block_root).await?;
 
         if payload_status.status.is_invalid() {
             return Err(eyre!("Engine rejected payload: {:?}", payload_status));
@@ -271,7 +281,7 @@ impl TestHarness {
             .latest_valid_hash
             .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
 
-        Ok(SubmittedBlock { parent_hash, hash })
+        Ok(SubmittedBlock { parent_hash, hash, payload })
     }
 
     /// Advance the canonical chain by `n` empty blocks.
@@ -311,4 +321,5 @@ const PERSISTENCE_POLL_INTERVAL_MS: u64 = 25;
 struct SubmittedBlock {
     parent_hash: B256,
     hash: B256,
+    payload: EnginePayload,
 }

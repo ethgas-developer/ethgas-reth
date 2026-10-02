@@ -7,7 +7,10 @@ mod accounts;
 pub use accounts::Account;
 
 mod genesis;
-pub use genesis::{DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_test_genesis, slot_number_at};
+pub use genesis::{
+    DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_prague_test_genesis, build_test_genesis,
+    build_test_genesis_with_amsterdam_at, slot_number_at,
+};
 
 mod contracts;
 pub use contracts::{

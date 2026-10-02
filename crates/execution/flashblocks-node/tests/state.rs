@@ -3,7 +3,10 @@
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{BlockBody, BlockHeader, Header, Transaction, TxType};
-    use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag, Encodable2718};
+    use alloy_eips::{
+        BlockHashOrNumber, BlockNumberOrTag, Encodable2718, eip7685::EMPTY_REQUESTS_HASH,
+        eip7928::EMPTY_BLOCK_ACCESS_LIST_HASH,
+    };
     use alloy_genesis::Genesis;
     use alloy_primitives::{
         Address, B256, BlockNumber, Bytes, TxKind, U256, address, b256, map::foldhash::HashMap,
@@ -19,7 +22,7 @@ mod tests {
         },
     };
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
-    use reth_chainspec::{ChainSpec, EthChainSpec};
+    use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
     use reth_db::{DatabaseEnv, test_utils::TempDatabase};
     use reth_network_p2p::sync::NoopSyncStateUpdater;
     use reth_node_api::NodeTypesWithDBAdapter;
@@ -238,6 +241,9 @@ mod tests {
             mut user_transactions: Vec<TransactionSigned>,
         ) -> RecoveredBlock<EthBlock> {
             let current_tip = self.current_canonical_block();
+            let timestamp = current_tip.header().timestamp() + 2;
+            let chain_spec = self.provider.chain_spec();
+            let amsterdam = chain_spec.is_amsterdam_active_at_timestamp(timestamp);
 
             let mut transactions: Vec<TransactionSigned> = vec![];
             transactions.append(&mut user_transactions);
@@ -251,9 +257,16 @@ mod tests {
                     parent_beacon_block_root: Some(current_tip.hash()),
                     parent_hash: current_tip.hash(),
                     number: current_tip.number() + 1,
-                    timestamp: current_tip.header().timestamp() + 2,
+                    timestamp,
                     gas_limit: current_tip.header().gas_limit(),
                     excess_blob_gas: current_tip.header().excess_blob_gas,
+                    requests_hash: chain_spec
+                        .is_prague_active_at_timestamp(timestamp)
+                        .then_some(EMPTY_REQUESTS_HASH),
+                    // A placeholder: nothing here validates the hash, and an Amsterdam header must
+                    // carry one.
+                    block_access_list_hash: amsterdam.then_some(EMPTY_BLOCK_ACCESS_LIST_HASH),
+                    slot_number: amsterdam.then(|| slot_number_at(timestamp)),
                     ..Header::default()
                 }),
                 BlockBody { transactions, ommers: vec![], withdrawals: None },

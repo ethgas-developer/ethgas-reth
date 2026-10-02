@@ -79,7 +79,8 @@ impl Account {
         let tx_request = alloy_rpc_types_eth::TransactionRequest::default()
             .from(self.address())
             .transaction_type(EIP1559_TX_TYPE)
-            .with_gas_limit(3_000_000)
+            // Amsterdam charges 1530 state gas per byte of deployed code.
+            .with_gas_limit(15_000_000)
             .with_max_fee_per_gas(1_000_000_000)
             .with_max_priority_fee_per_gas(0)
             .with_chain_id(DEVNET_CHAIN_ID)

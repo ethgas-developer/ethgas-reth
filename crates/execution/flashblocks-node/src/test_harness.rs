@@ -274,6 +274,12 @@ impl FlashblocksHarness {
         Self::with_options(true, options).await
     }
 
+    /// Launch the harness with automatic canonical processing on another chain than the default
+    /// test genesis, for example one from `build_test_genesis_with_amsterdam_at`.
+    pub async fn with_chain_spec(chain_spec: Arc<ChainSpec>) -> Result<Self> {
+        Self::launch(true, LocalNodeOptions::default(), chain_spec).await
+    }
+
     /// Get a handle to the in-memory Flashblocks state backing the harness.
     pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
@@ -285,11 +291,16 @@ impl FlashblocksHarness {
     }
 
     async fn with_options(process_canonical: bool, options: LocalNodeOptions) -> Result<Self> {
-        init_silenced_tracing();
+        Self::launch(process_canonical, options, Arc::new(ChainSpec::from(build_test_genesis())))
+            .await
+    }
 
-        // Build default chain spec programmatically
-        let genesis = build_test_genesis();
-        let chain_spec = Arc::new(ChainSpec::from(genesis));
+    async fn launch(
+        process_canonical: bool,
+        options: LocalNodeOptions,
+        chain_spec: Arc<ChainSpec>,
+    ) -> Result<Self> {
+        init_silenced_tracing();
 
         // Create the extension and keep a reference to get parts after launch
         let extension = FlashblocksTestExtension::new(process_canonical);
@@ -338,6 +349,14 @@ impl FlashblocksBuilderTestHarness {
         // the automatic canonical listener and only apply blocks when the test explicitly requests
         // it.
         let node = FlashblocksHarness::manual_canonical()
+            .await
+            .expect("able to launch flashblocks harness");
+        Self::from_harness(node)
+    }
+
+    /// Like [`Self::new`], on another chain than the default test genesis.
+    pub async fn with_chain_spec(chain_spec: Arc<ChainSpec>) -> Self {
+        let node = FlashblocksHarness::launch(false, LocalNodeOptions::default(), chain_spec)
             .await
             .expect("able to launch flashblocks harness");
         Self::from_harness(node)

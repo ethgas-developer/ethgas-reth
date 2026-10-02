@@ -204,6 +204,7 @@ mod tests {
                 timestamp: 1700000000,
                 extra_data: Bytes::default(),
                 base_fee_per_gas: U256::from(1000000000u64),
+                slot_number: None,
             }),
             diff: ExecutionPayloadFlashblockDeltaV1 {
                 state_root: B256::ZERO,
@@ -215,6 +216,7 @@ mod tests {
                 withdrawals: vec![],
                 blob_gas_used: 0,
                 excess_blob_gas: 0,
+                requests: None,
             },
             metadata: Metadata::default(),
         }

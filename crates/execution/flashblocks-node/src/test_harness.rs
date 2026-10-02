@@ -24,7 +24,7 @@ use ethgas_node_runner::{
     EthgasNodeExtension, NodeHooks, PendingStateSource,
     test_utils::{
         Account, LocalNode, LocalNodeOptions, LocalNodeProvider, NODE_STARTUP_DELAY_MS,
-        TestHarness, build_test_genesis, init_silenced_tracing,
+        TestHarness, build_test_genesis, init_silenced_tracing, slot_number_at,
     },
 };
 use eyre::Result;
@@ -563,6 +563,7 @@ impl<'a> FlashblockBuilder<'a> {
         let current_block = self.harness.node.latest_block();
         let canonical_block_num =
             self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
+        let timestamp = current_block.timestamp + 2;
 
         let base = (self.index == 0).then(|| ExecutionPayloadBaseV1 {
             parent_beacon_block_root: current_block.parent_beacon_block_root.unwrap_or_default(),
@@ -571,9 +572,10 @@ impl<'a> FlashblockBuilder<'a> {
             prev_randao: B256::random(),
             block_number: canonical_block_num,
             gas_limit: current_block.gas_limit,
-            timestamp: current_block.timestamp + 2,
+            timestamp,
             extra_data: Bytes::new(),
             base_fee_per_gas: U256::from(100),
+            slot_number: Some(slot_number_at(timestamp)),
         });
 
         FlashBlock {
@@ -590,6 +592,7 @@ impl<'a> FlashblockBuilder<'a> {
                 transactions: self.transactions.clone(),
                 blob_gas_used: 0,
                 excess_blob_gas: 0,
+                requests: None,
             },
             metadata: Metadata {
                 block_number: canonical_block_num,

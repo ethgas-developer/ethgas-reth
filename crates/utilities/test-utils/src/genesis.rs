@@ -13,6 +13,16 @@ pub const DEVNET_CHAIN_ID: u64 = 1;
 /// Gas limit for genesis block configuration.
 pub const GENESIS_GAS_LIMIT: u64 = 100_000_000;
 
+/// Added to a block's timestamp to give its slot number, so that no slot equals a block number or
+/// a timestamp and a test can tell the three apart.
+const SLOT_NUMBER_OFFSET: u64 = 1_000_000;
+
+/// The slot number of the test chain's block at `timestamp`. Every fixture that names a slot uses
+/// it, so a flashblock and a canonical block at the same timestamp agree.
+pub const fn slot_number_at(timestamp: u64) -> u64 {
+    timestamp + SLOT_NUMBER_OFFSET
+}
+
 /// Builds a test genesis configuration programmatically.
 ///
 /// Creates an Ethereum genesis with:

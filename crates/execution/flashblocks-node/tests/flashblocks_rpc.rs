@@ -25,7 +25,7 @@ use alloy_rpc_types_eth::{
     state::{AccountOverride, StateOverride},
 };
 use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
-use ethgas_node_runner::test_utils::{Account, BLOCK_TIME_SECONDS, DoubleCounter};
+use ethgas_node_runner::test_utils::{Account, BLOCK_TIME_SECONDS, DoubleCounter, slot_number_at};
 use ethgas_reth_flashblocks::{
     FlashblocksAPI,
     payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata},
@@ -153,6 +153,7 @@ impl TestSetup {
                 timestamp: 0,
                 extra_data: Bytes::new(),
                 base_fee_per_gas: U256::ZERO,
+                slot_number: Some(slot_number_at(0)),
             }),
             diff: ExecutionPayloadFlashblockDeltaV1 {
                 blob_gas_used: 0,
@@ -201,6 +202,7 @@ impl TestSetup {
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
                 excess_blob_gas: 0,
+                requests: None,
             },
             metadata: Metadata {
                 block_number: 1,
@@ -730,6 +732,7 @@ fn logs_payload(logs: Vec<PrimitiveLog>) -> FlashBlock {
             timestamp: 0,
             extra_data: Bytes::new(),
             base_fee_per_gas: U256::ZERO,
+            slot_number: Some(slot_number_at(0)),
         }),
         diff: ExecutionPayloadFlashblockDeltaV1 {
             blob_gas_used: 0,

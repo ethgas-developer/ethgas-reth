@@ -15,7 +15,7 @@ use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, TransactionRequest};
 use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
-use ethgas_node_runner::test_utils::Account;
+use ethgas_node_runner::test_utils::{Account, slot_number_at};
 use ethgas_reth_flashblocks::payload::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, InclusionFee, Metadata,
 };
@@ -75,6 +75,7 @@ fn base_payload(inclusion_fee: Option<InclusionFee>) -> FlashBlock {
             timestamp: 0,
             extra_data: Bytes::new(),
             base_fee_per_gas: U256::ZERO,
+            slot_number: Some(slot_number_at(0)),
         }),
         diff: ExecutionPayloadFlashblockDeltaV1 {
             transactions: vec![TRANSFER_ETH_TX],

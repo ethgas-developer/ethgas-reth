@@ -15,6 +15,18 @@ pub struct Metrics {
     #[metric(describe = "Count of times upstream receiver was closed/errored")]
     pub upstream_errors: Counter,
 
+    /// Keys in received flashblocks that this node does not read, one per key per flashblock.
+    #[metric(describe = "Count of keys in received flashblocks that this node does not read")]
+    pub unknown_wire_fields: Counter,
+
+    /// Received base payloads that carry no slot number.
+    #[metric(describe = "Count of received base payloads that carry no slot number")]
+    pub wire_slot_number_missing: Counter,
+
+    /// Received flashblocks whose diff carries no requests list.
+    #[metric(describe = "Count of received flashblocks whose diff carries no requests list")]
+    pub wire_requests_missing: Counter,
+
     /// Count of messages received from the upstream source.
     #[metric(describe = "Count of messages received from the upstream source")]
     pub upstream_messages: Counter,

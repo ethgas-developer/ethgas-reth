@@ -1,6 +1,6 @@
 //! Wire types for the flashblock payloads published by the sequencer.
 
-use alloy_eips::eip4895::Withdrawal;
+use alloy_eips::{eip4895::Withdrawal, eip7685::Requests};
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use reth_ethereum_primitives::Receipt;
@@ -82,6 +82,11 @@ pub struct ExecutionPayloadBaseV1 {
     pub extra_data: Bytes,
     /// The base fee per gas of the block.
     pub base_fee_per_gas: U256,
+    /// The EIP-7843 slot number of the block. Required once Amsterdam is active, and
+    /// [`crate::BlockAssembler::assemble`] rejects a base payload without it then. `None` from a
+    /// producer that predates the field.
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub slot_number: Option<u64>,
 }
 
 /// Represents the modified portions of an execution payload within a flashblock.
@@ -112,6 +117,10 @@ pub struct ExecutionPayloadFlashblockDeltaV1 {
     /// Execess blob gas used
     #[serde(with = "alloy_serde::quantity")]
     pub excess_blob_gas: u64,
+    /// The EIP-7685 requests of the block through this flashblock, each one a type byte followed
+    /// by its data. Cumulative, like `state_root`. `None` from a producer that predates the
+    /// field, which is not the same as an empty list.
+    pub requests: Option<Requests>,
 }
 
 /// Internal helper for decoding

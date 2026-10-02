@@ -11,7 +11,7 @@ mod tests {
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
     use alloy_sol_types::SolCall;
-    use ethgas_node_runner::test_utils::PendingProbe;
+    use ethgas_node_runner::test_utils::{PendingProbe, slot_number_at};
     use ethgas_reth_flashblocks::{
         FlashblocksAPI, FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
         payload::{
@@ -462,6 +462,7 @@ mod tests {
                 transactions.insert(0, base_tx.encoded_2718().into());
             }
 
+            let timestamp = current_block.timestamp + 2;
             let base = (self.index == 0).then(|| ExecutionPayloadBaseV1 {
                 parent_beacon_block_root: current_block.hash(),
                 parent_hash: current_block.hash(),
@@ -469,9 +470,10 @@ mod tests {
                 prev_randao: B256::random(),
                 block_number: canonical_block_num,
                 gas_limit: current_block.gas_limit,
-                timestamp: current_block.timestamp + 2,
+                timestamp,
                 extra_data: Bytes::new(),
                 base_fee_per_gas: U256::from(100),
+                slot_number: Some(slot_number_at(timestamp)),
             });
 
             FlashBlock {
@@ -488,6 +490,7 @@ mod tests {
                     transactions,
                     blob_gas_used: 0,
                     excess_blob_gas: 0,
+                    requests: None,
                 },
                 metadata: Metadata {
                     block_number: canonical_block_num,

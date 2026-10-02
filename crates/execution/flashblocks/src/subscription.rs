@@ -1,6 +1,6 @@
 //! WebSocket subscription handling for flashblocks.
 
-use std::{io::Read, sync::Arc, time::Duration};
+use std::{collections::HashSet, io::Read, sync::Arc, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::{
@@ -19,6 +19,39 @@ use crate::{
 
 /// Maximum size of a flashblock payload after decoding, in bytes.
 const MAX_DECODED_FLASHBLOCK_BYTES: usize = 5 * 1024 * 1024;
+
+/// The keys of each wire object this node reads. A producer that adds a key ahead of this node
+/// must not stop decoding, so any other key is counted and logged, not refused.
+const ENVELOPE_KEYS: &[&str] = &["payload_id", "index", "base", "diff", "metadata"];
+const BASE_KEYS: &[&str] = &[
+    "parent_beacon_block_root",
+    "parent_hash",
+    "fee_recipient",
+    "prev_randao",
+    "block_number",
+    "gas_limit",
+    "timestamp",
+    "extra_data",
+    "base_fee_per_gas",
+    "slot_number",
+];
+const DIFF_KEYS: &[&str] = &[
+    "state_root",
+    "receipts_root",
+    "logs_bloom",
+    "gas_used",
+    "block_hash",
+    "transactions",
+    "withdrawals",
+    "blob_gas_used",
+    "excess_blob_gas",
+    "requests",
+];
+const METADATA_KEYS: &[&str] =
+    &["block_number", "new_account_balances", "receipts", "inclusion_fee"];
+
+/// How many distinct unknown keys the subscriber warns about; the counter counts every one.
+const MAX_WARNED_UNKNOWN_KEYS: usize = 64;
 
 // Simplify actor messages to just handle shutdown
 #[derive(Debug)]
@@ -62,6 +95,7 @@ where
 
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
+            let mut warned_keys = HashSet::new();
 
             loop {
                 match connect_async(ws_url.as_str()).await {
@@ -82,7 +116,8 @@ where
 
                                     match msg {
                                         Ok(Message::Binary(bytes)) => match try_decode_message(&bytes) {
-                                            Ok(payload) => {
+                                            Ok((payload, shape)) => {
+                                                record_wire_shape(&metrics, &mut warned_keys, &shape);
                                                 let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
                                                     error!(message = "Failed to publish message to channel", error = %e);
                                                 });
@@ -96,7 +131,8 @@ where
                                         },
                                         Ok(Message::Text(text)) => {
                                             match try_decode_plaintext_message(&text) {
-                                                Ok(payload) => {
+                                                Ok((payload, shape)) => {
+                                                    record_wire_shape(&metrics, &mut warned_keys, &shape);
                                                     let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
                                                         error!(message = "Failed to publish message to channel", error = %e);
                                                     });
@@ -198,18 +234,85 @@ where
     }
 }
 
-fn try_decode_message(bytes: &[u8]) -> eyre::Result<FlashBlock> {
+/// What a flashblock carries beyond, or short of, what this node reads.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WireShape {
+    /// Keys this node does not read, as `object.key`.
+    unknown_keys: Vec<String>,
+    /// The flashblock has a base payload, and it carries no slot number.
+    base_without_slot_number: bool,
+    /// The diff carries no requests list.
+    diff_without_requests: bool,
+}
+
+impl WireShape {
+    fn of(payload: &serde_json::Value) -> Self {
+        let mut unknown_keys = Vec::new();
+        for (object, value, known) in [
+            ("envelope", Some(payload), ENVELOPE_KEYS),
+            ("base", payload.get("base"), BASE_KEYS),
+            ("diff", payload.get("diff"), DIFF_KEYS),
+            ("metadata", payload.get("metadata"), METADATA_KEYS),
+        ] {
+            let Some(map) = value.and_then(serde_json::Value::as_object) else { continue };
+            unknown_keys.extend(
+                map.keys()
+                    .filter(|key| !known.contains(&key.as_str()))
+                    .map(|key| format!("{object}.{key}")),
+            );
+        }
+
+        // A null decodes as an absent value, so it counts as one here too.
+        let present =
+            |value: Option<&serde_json::Value>| value.is_some_and(|value| !value.is_null());
+        let base = payload.get("base").filter(|base| !base.is_null());
+        Self {
+            unknown_keys,
+            base_without_slot_number: base.is_some_and(|base| !present(base.get("slot_number"))),
+            diff_without_requests: !present(
+                payload.get("diff").and_then(|diff| diff.get("requests")),
+            ),
+        }
+    }
+}
+
+/// Counts what `shape` reports, and warns once for each unknown key, for the first
+/// [`MAX_WARNED_UNKNOWN_KEYS`] distinct keys.
+fn record_wire_shape(metrics: &Metrics, warned_keys: &mut HashSet<String>, shape: &WireShape) {
+    for key in &shape.unknown_keys {
+        metrics.unknown_wire_fields.increment(1);
+        if warned_keys.len() < MAX_WARNED_UNKNOWN_KEYS && warned_keys.insert(key.clone()) {
+            warn!(message = "flashblock carries a key this node does not read", key = %key);
+        }
+    }
+    if shape.base_without_slot_number {
+        metrics.wire_slot_number_missing.increment(1);
+    }
+    if shape.diff_without_requests {
+        metrics.wire_requests_missing.increment(1);
+    }
+}
+
+fn try_decode_message(bytes: &[u8]) -> eyre::Result<(FlashBlock, WireShape)> {
     let text = try_parse_message(bytes)?;
     parse_flashblock_json(&text)
 }
 
-fn try_decode_plaintext_message(text: &str) -> eyre::Result<FlashBlock> {
+fn try_decode_plaintext_message(text: &str) -> eyre::Result<(FlashBlock, WireShape)> {
     ensure_within_size_limit(text.len())?;
     parse_flashblock_json(text)
 }
 
-fn parse_flashblock_json(text: &str) -> eyre::Result<FlashBlock> {
-    let payload: FlashblocksPayloadV1 = match serde_json::from_str(text) {
+fn parse_flashblock_json(text: &str) -> eyre::Result<(FlashBlock, WireShape)> {
+    let value: serde_json::Value = match serde_json::from_str(text) {
+        Ok(value) => value,
+        Err(e) => {
+            return Err(eyre::eyre!("failed to parse flashblock JSON: {}", e));
+        }
+    };
+    let shape = WireShape::of(&value);
+
+    let payload: FlashblocksPayloadV1 = match serde_json::from_value(value) {
         Ok(m) => m,
         Err(e) => {
             return Err(eyre::eyre!("failed to parse flashblock JSON: {}", e));
@@ -223,13 +326,14 @@ fn parse_flashblock_json(text: &str) -> eyre::Result<FlashBlock> {
         }
     };
 
-    Ok(FlashBlock {
+    let flashblock = FlashBlock {
         payload_id: payload.payload_id,
         index: payload.index,
         base: payload.base,
         diff: payload.diff,
         metadata,
-    })
+    };
+    Ok((flashblock, shape))
 }
 
 fn try_parse_message(bytes: &[u8]) -> eyre::Result<String> {
@@ -262,10 +366,11 @@ fn ensure_within_size_limit(len: usize) -> eyre::Result<()> {
 mod tests {
     use std::io::Write;
 
-    use alloy_primitives::U256;
+    use alloy_eips::eip7685::Requests;
+    use alloy_primitives::{B256, Bytes, U256};
 
     use super::*;
-    use crate::payload::InclusionFee;
+    use crate::payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, InclusionFee};
 
     fn brotli_compress(bytes: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
@@ -341,7 +446,7 @@ mod tests {
     fn a_null_inclusion_fee_decodes_as_none() {
         let text = flashblock_json(metadata_with_inclusion_fee(serde_json::Value::Null));
 
-        let parsed = parse_flashblock_json(&text).expect("accepted");
+        let (parsed, _) = parse_flashblock_json(&text).expect("accepted");
         assert_eq!(parsed.metadata.inclusion_fee, None);
         assert_eq!(parsed.metadata.block_number, 1);
     }
@@ -352,10 +457,117 @@ mod tests {
             serde_json::json!({"priority_fee": "0x10", "tier": "high"}),
         ));
 
-        let parsed = parse_flashblock_json(&text).expect("accepted");
+        let (parsed, _) = parse_flashblock_json(&text).expect("accepted");
         assert_eq!(
             parsed.metadata.inclusion_fee,
             Some(InclusionFee { priority_fee: U256::from(16) })
         );
+    }
+
+    /// A base flashblock as a producer that predates the Amsterdam fields sends it.
+    fn pre_amsterdam_flashblock() -> serde_json::Value {
+        let mut flashblock = serde_json::to_value(FlashblocksPayloadV1 {
+            base: Some(ExecutionPayloadBaseV1::default()),
+            metadata: serde_json::json!({
+                "block_number": 1,
+                "new_account_balances": {},
+                "receipts": {},
+            }),
+            ..Default::default()
+        })
+        .expect("a payload serializes");
+        flashblock["base"].as_object_mut().expect("an object").remove("slot_number");
+        flashblock["diff"].as_object_mut().expect("an object").remove("requests");
+        flashblock
+    }
+
+    #[test]
+    fn a_producer_without_the_amsterdam_fields_decodes_them_as_absent() {
+        let text = pre_amsterdam_flashblock().to_string();
+
+        let (parsed, _) = parse_flashblock_json(&text).expect("accepted");
+        assert_eq!(parsed.base.expect("a base payload").slot_number, None);
+        assert_eq!(parsed.diff.requests, None);
+    }
+
+    #[test]
+    fn the_amsterdam_fields_decode_from_the_wire_encoding() {
+        let mut flashblock = pre_amsterdam_flashblock();
+        flashblock["base"]["slot_number"] = serde_json::json!("0x1a2b");
+        flashblock["diff"]["requests"] = serde_json::json!(["0x00aa", "0x01bb"]);
+
+        let (parsed, _) = parse_flashblock_json(&flashblock.to_string()).expect("accepted");
+        assert_eq!(parsed.base.expect("a base payload").slot_number, Some(0x1a2b));
+        assert_eq!(
+            parsed.diff.requests,
+            Some(Requests::new(vec![
+                Bytes::from_static(&[0x00, 0xaa]),
+                Bytes::from_static(&[0x01, 0xbb]),
+            ]))
+        );
+    }
+
+    #[test]
+    fn every_key_the_node_reads_is_known() {
+        let payload = FlashblocksPayloadV1 {
+            base: Some(ExecutionPayloadBaseV1 { slot_number: Some(1), ..Default::default() }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                requests: Some(Requests::default()),
+                ..Default::default()
+            },
+            metadata: serde_json::to_value(Metadata {
+                inclusion_fee: Some(InclusionFee { priority_fee: U256::from(1) }),
+                ..Default::default()
+            })
+            .expect("metadata serializes"),
+            ..Default::default()
+        };
+
+        let shape = WireShape::of(&serde_json::to_value(&payload).expect("a payload serializes"));
+        assert_eq!(shape, WireShape::default());
+    }
+
+    #[test]
+    fn an_unknown_key_at_each_level_is_reported_and_the_flashblock_still_decodes() {
+        let mut flashblock = pre_amsterdam_flashblock();
+        flashblock["builder_version"] = serde_json::json!("2");
+        flashblock["base"]["block_access_list_hash"] = serde_json::json!(B256::ZERO);
+        flashblock["diff"]["state_root_v2"] = serde_json::json!(B256::ZERO);
+        flashblock["metadata"]["tier"] = serde_json::json!("high");
+
+        let (parsed, shape) = parse_flashblock_json(&flashblock.to_string()).expect("accepted");
+        assert_eq!(parsed.metadata.block_number, 1);
+        let mut unknown_keys = shape.unknown_keys;
+        unknown_keys.sort();
+        assert_eq!(
+            unknown_keys,
+            [
+                "base.block_access_list_hash",
+                "diff.state_root_v2",
+                "envelope.builder_version",
+                "metadata.tier"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_shape_says_which_amsterdam_fields_a_flashblock_lacks() {
+        let (_, old) = parse_flashblock_json(&pre_amsterdam_flashblock().to_string()).unwrap();
+        assert!(old.base_without_slot_number);
+        assert!(old.diff_without_requests);
+
+        let mut nulls = pre_amsterdam_flashblock();
+        nulls["base"]["slot_number"] = serde_json::Value::Null;
+        nulls["diff"]["requests"] = serde_json::Value::Null;
+        let (_, nulls) = parse_flashblock_json(&nulls.to_string()).unwrap();
+        assert!(nulls.base_without_slot_number);
+        assert!(nulls.diff_without_requests);
+
+        let mut diff_only = pre_amsterdam_flashblock();
+        diff_only.as_object_mut().expect("an object").remove("base");
+        diff_only["diff"]["requests"] = serde_json::json!([]);
+        let (_, diff_only) = parse_flashblock_json(&diff_only.to_string()).unwrap();
+        assert!(!diff_only.base_without_slot_number, "a diff-only flashblock has no slot to miss");
+        assert!(!diff_only.diff_without_requests);
     }
 }

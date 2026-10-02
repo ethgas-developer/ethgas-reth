@@ -828,13 +828,26 @@ where
                 }
 
                 if should_execute_transaction {
-                    let ResultAndState { state, .. } = evm
+                    let ResultAndState { result, state } = evm
                         .transact(recovered_transaction)
                         .map_err(|e| crate::error::ExecutionError::TransactionFailed {
                             tx_hash: *transaction.tx_hash(),
                             sender,
                             reason: e.to_string(),
                         })?;
+                    // Pending serves the producer's receipt beside this node's state, so a
+                    // differing status means the two executions disagree.
+                    if result.is_success() != receipt.status() {
+                        self.metrics.transaction_status_mismatch.increment(1);
+                        warn!(
+                            message = "flashblock transaction result differs from the producer's receipt",
+                            block_number = block.number,
+                            tx_hash = %transaction.tx_hash(),
+                            producer_success = receipt.status(),
+                            producer_gas_used = tx_gas_used,
+                            %result,
+                        );
+                    }
                     pending_blocks_builder
                         .with_transaction_state(*transaction.tx_hash(), state.clone());
                     evm.db_mut().commit(state);

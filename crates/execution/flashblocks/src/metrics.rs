@@ -71,6 +71,13 @@ pub struct Metrics {
     #[metric(describe = "Count of times flashblocks are unable to be converted to blocks")]
     pub block_processing_error: Counter,
 
+    /// Flashblock transaction executions whose result, success or failure, differs from the
+    /// status of the producer's receipt.
+    #[metric(
+        describe = "Count of flashblock transactions whose status here differs from the producer's"
+    )]
+    pub transaction_status_mismatch: Counter,
+
     /// Count of times pending snapshot was cleared because canonical caught up.
     #[metric(
         describe = "Number of times pending snapshot was cleared because canonical caught up"

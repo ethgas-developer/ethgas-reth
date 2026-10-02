@@ -55,7 +55,8 @@ impl BlockAssembler {
     /// - The flashblocks slice is empty
     /// - The first flashblock is missing its base payload
     /// - The base payload names block zero, which has no parent state
-    /// - A transaction in the block has no receipt on the wire
+    /// - The producer sent no requests list and a transaction in the block has no receipt on the
+    ///   wire
     /// - Block conversion fails
     pub fn assemble(
         spec: &impl EthExecutorSpec,
@@ -116,6 +117,11 @@ impl BlockAssembler {
         // ExecutionPayloadV3 predates both fields, so neither arrives on the wire.
         block.header.parent_beacon_block_root = Some(base.parent_beacon_block_root);
         block.header.requests_hash = Self::requests_hash(spec, &block, flashblocks)?;
+        // Only an Amsterdam header carries the slot. The block access list hash stays `None`: the
+        // node builds no access list for a block that is not sealed.
+        if spec.is_amsterdam_active_at_timestamp(base.timestamp) {
+            block.header.slot_number = base.slot_number;
+        }
 
         let sealed_header = block.header.clone().seal(B256::ZERO);
 
@@ -124,9 +130,11 @@ impl BlockAssembler {
 
     /// Derives the requests hash for an assembled block.
     ///
-    /// Only EIP-6110 deposits are recoverable: they are logs, so the wire receipts carry them. The
-    /// rest — EIP-7002, EIP-7251, and Amsterdam's EIP-8282 pair — come from system calls made after
-    /// the last transaction, so a block carrying one gets a confidently wrong hash.
+    /// The producer's requests list is authoritative, and cumulative, so the latest flashblock's
+    /// covers the block. Without one, only EIP-6110 deposits are recoverable: they are logs, so the
+    /// wire receipts carry them. The rest — EIP-7002, EIP-7251, and Amsterdam's EIP-8282 pair —
+    /// come from system calls made after the last transaction, so a block carrying one then gets a
+    /// confidently wrong hash.
     fn requests_hash(
         spec: &impl EthExecutorSpec,
         block: &Block,
@@ -135,6 +143,12 @@ impl BlockAssembler {
         // The same timestamp reth gates on when it builds a canonical header.
         if !spec.is_prague_active_at_timestamp(block.header.timestamp) {
             return Ok(None);
+        }
+
+        if let Some(requests) =
+            flashblocks.last().and_then(|flashblock| flashblock.diff.requests.as_ref())
+        {
+            return Ok(Some(requests.requests_hash()));
         }
 
         let receipts: HashMap<&B256, &Receipt> =
@@ -186,6 +200,18 @@ mod tests {
     fn test_spec() -> ChainSpec {
         ChainSpec::from(Genesis {
             config: ChainConfig { prague_time: Some(0), ..Default::default() },
+            ..Default::default()
+        })
+    }
+
+    fn amsterdam_spec() -> ChainSpec {
+        ChainSpec::from(Genesis {
+            config: ChainConfig {
+                prague_time: Some(0),
+                osaka_time: Some(0),
+                amsterdam_time: Some(0),
+                ..Default::default()
+            },
             ..Default::default()
         })
     }
@@ -399,16 +425,88 @@ mod tests {
         ));
     }
 
+    /// A flashblock with its base payload's slot set, as the producer sends it on every chain.
+    fn flashblock_with_slot(slot_number: u64) -> FlashBlock {
+        let mut flashblock = create_test_flashblock(0, true);
+        flashblock.base.as_mut().expect("a base payload").slot_number = Some(slot_number);
+        flashblock
+    }
+
+    #[test]
+    fn an_amsterdam_header_carries_the_slot_and_no_block_access_list_hash() {
+        let assembled =
+            BlockAssembler::assemble(&amsterdam_spec(), &[flashblock_with_slot(7)]).unwrap();
+
+        assert_eq!(assembled.block.header.slot_number, Some(7));
+        assert_eq!(assembled.header.slot_number, Some(7));
+        assert_eq!(assembled.block.header.block_access_list_hash, None);
+    }
+
+    #[test]
+    fn a_header_before_amsterdam_carries_no_slot() {
+        let assembled = BlockAssembler::assemble(&test_spec(), &[flashblock_with_slot(7)]).unwrap();
+
+        assert_eq!(assembled.block.header.slot_number, None);
+    }
+
     #[test]
     fn requests_hash_is_absent_before_prague() {
         let spec = ChainSpec::from(Genesis {
             config: ChainConfig { prague_time: None, ..Default::default() },
             ..Default::default()
         });
-        let assembled =
-            BlockAssembler::assemble(&spec, &[create_test_flashblock(0, true)]).unwrap();
+        let mut flashblock = create_test_flashblock(0, true);
+        flashblock.diff.requests = Some(system_call_requests());
+
+        let assembled = BlockAssembler::assemble(&spec, &[flashblock]).unwrap();
 
         assert_eq!(assembled.block.header.requests_hash, None);
+    }
+
+    /// An EIP-7002 withdrawal request and an EIP-7251 consolidation request, which no receipt
+    /// reveals.
+    fn system_call_requests() -> Requests {
+        Requests::new(vec![Bytes::from_static(&[0x01, 0xaa]), Bytes::from_static(&[0x02, 0xbb])])
+    }
+
+    #[test]
+    fn requests_hash_commits_to_the_producers_requests() {
+        let mut flashblock = create_test_flashblock(0, true);
+        flashblock.diff.requests = Some(system_call_requests());
+
+        let assembled = BlockAssembler::assemble(&test_spec(), &[flashblock]).unwrap();
+
+        assert_eq!(
+            assembled.block.header.requests_hash,
+            Some(system_call_requests().requests_hash())
+        );
+    }
+
+    /// An empty list is the producer saying the block has no requests; only an absent list falls
+    /// back to the receipts.
+    #[test]
+    fn an_empty_requests_list_wins_over_deposits_in_the_receipts() {
+        let mut flashblock = flashblock_with_receipts(vec![deposit_logs(DEPOSIT_LOG_A)]);
+        flashblock.diff.requests = Some(Requests::default());
+
+        let assembled = BlockAssembler::assemble(&test_spec(), &[flashblock]).unwrap();
+
+        assert_eq!(assembled.block.header.requests_hash, Some(EMPTY_REQUESTS_HASH));
+    }
+
+    #[test]
+    fn requests_hash_reads_the_latest_flashblocks_requests() {
+        let mut first = create_test_flashblock(0, true);
+        first.diff.requests = Some(Requests::new(vec![Bytes::from_static(&[0x01, 0xaa])]));
+        let mut second = create_test_flashblock(1, false);
+        second.diff.requests = Some(system_call_requests());
+
+        let assembled = BlockAssembler::assemble(&test_spec(), &[first, second]).unwrap();
+
+        assert_eq!(
+            assembled.block.header.requests_hash,
+            Some(system_call_requests().requests_hash())
+        );
     }
 
     #[test]

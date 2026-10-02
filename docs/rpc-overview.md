@@ -16,6 +16,7 @@ mempool" and starts meaning "the pre-confirmed block the builder is currently as
 ## Contents
 
 - [What `pending` means on this node](#what-pending-means-on-this-node)
+- [After the Amsterdam fork](#after-the-amsterdam-fork)
 - [API reference](#api-reference)
   - [Ethereum JSON-RPC API](#ethereum-json-rpc-api)
   - [ETHGas namespace](#ethgas-namespace)
@@ -56,7 +57,9 @@ the flashblock. Without flashblock data, they describe that executed block too, 
 tells one story. `eth_feeHistory` always uses the latest confirmed block.
 
 Code and storage at `pending`, and balances the builder did not report, come from the node's own
-execution of the flashblock transactions on top of the latest confirmed block. `eth_call`,
+execution of the flashblock transactions on top of the latest confirmed block. After the Amsterdam
+fork, that execution runs in the slot the builder sent, so `SLOTNUM` reads what it read for the
+builder. `eth_call`,
 `eth_estimateGas`, `eth_simulateV1` and the call-tracing methods run on that same state, in the
 block environment of the flashblock being built, so they all agree.
 
@@ -65,6 +68,23 @@ environment and once for the account state. When the pending block changes betwe
 because the builder started the next block or the node executed or confirmed one, the call runs
 the earlier block environment over the later state. The window is one call wide and opens only at
 a block boundary. Repeat the call if the result must be consistent.
+
+---
+
+## After the Amsterdam fork
+
+On a chain where Amsterdam is active, the pending block follows the fork in these ways:
+
+| What | At `pending` |
+|---|---|
+| `slotNumber` in the block header | The slot the builder is building for |
+| `blockAccessListHash` in the block header | Absent: the node builds no access list for an unsealed block |
+| `SLOTNUM` in pre-confirmed execution, `eth_call`, `eth_estimateGas` and call tracing | The builder's slot |
+| `SLOTNUM` in `eth_simulateV1` | The latest confirmed block's slot plus one per simulated block |
+| `eth_getBlockAccessList` | `null` |
+
+See [`eth_getBlockByNumber`](./ethereum-json-rpc-api/eth_getBlockByNumber.md) and
+[`eth_simulateV1`](./flashblocks-api/eth_simulateV1.md).
 
 ---
 

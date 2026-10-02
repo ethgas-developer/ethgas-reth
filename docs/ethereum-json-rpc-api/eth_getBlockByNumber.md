@@ -57,5 +57,13 @@ Returns a block by number or tag.
 **Its `hash` is `0x000…0`.** The node does not compute a hash for an unsealed block, and does not
 publish the producer's. Do not key on it, and do not pass it to `eth_getBlockByHash`.
 
+**After the Amsterdam fork, it carries `slotNumber` and no `blockAccessListHash`.** `slotNumber` is
+the slot the builder is building the block for. The node builds no block access list for an
+unsealed block, so that field is absent rather than a placeholder.
+
+**`requestsHash` commits to the builder's execution requests.** When the builder does not send
+them, the node can read only the deposits from the receipts, and the hash is then wrong for a
+block with a withdrawal, consolidation or builder request.
+
 If no flashblock data is available, `pending` returns the next block when the node has already
 executed it for its consensus client, else the latest confirmed block. It never returns `null`.

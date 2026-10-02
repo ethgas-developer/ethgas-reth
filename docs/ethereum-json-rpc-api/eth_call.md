@@ -54,7 +54,8 @@ Executes a message call immediately, without broadcasting a transaction. Nothing
 pre-confirmed transactions the builder has already sequenced.
 
 The block environment is the flashblock's own: `block.number`, `block.timestamp` and the base fee
-are those of the block being built. A state override applies on top of the flashblock's state, so
+are those of the block being built, and after the Amsterdam fork so is the slot number that
+`SLOTNUM` reads. A state override applies on top of the flashblock's state, so
 overriding one field of an account keeps the account's other fields as the flashblock left them.
 
 Without flashblock data, `pending` is reth's own: the latest confirmed block's state in the

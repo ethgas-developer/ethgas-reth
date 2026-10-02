@@ -75,5 +75,8 @@ into that block so far. If you want only what is new, subscribe to
 
 **`hash` is `0x000…0` and each transaction's `blockHash` is `null`.** The block is not sealed.
 
+**After the Amsterdam fork, the block carries `slotNumber` and no `blockAccessListHash`**, as
+[`eth_getBlockByNumber`](../ethereum-json-rpc-api/eth_getBlockByNumber.md) describes.
+
 **To follow confirmed blocks instead**, use the standard `newHeads` subscription. It does not fire
 per flashblock.

@@ -40,6 +40,25 @@ docker run -d --name ethgas-node \
   --ws --ws.addr 0.0.0.0 --ws.api eth,net,web3
 ```
 
+The node takes every reth `--engine.*` flag, as `reth node` does.
+
+## Run a local Amsterdam chain
+
+`just devnet` starts a single node that seals its own blocks, with no consensus client. It mines a
+block every 2 s and activates the Amsterdam fork 60 s after launch, so you can watch blocks change
+shape at the fork. Its genesis is [`devnet/amsterdam-genesis.json`](../devnet/amsterdam-genesis.json),
+stamped with the launch time. It funds the accounts of the mnemonic `test test test test test test
+test test test test test junk` and serves HTTP on port 8545.
+
+```bash
+just devnet
+just devnet ws://127.0.0.1:1111   # also follow a flashblocks producer
+```
+
+The recipe needs `jq`. Each run starts from an empty data directory under `target/devnet`. reth's
+local miner gives every Amsterdam block slot number 0, so a contract that reads `SLOTNUM` sees 0
+on this chain.
+
 ## Flashblocks flags
 
 | Flag | Description | Default |

@@ -175,7 +175,7 @@ impl LocalNode {
             .into_iter()
             .fold(NodeHooks::new(), |b, ext| ext.apply(b))
             .apply_to(builder)
-            .launch()
+            .launch_with_debug_capabilities()
             .await?;
 
         let http_api_addr = node_handle

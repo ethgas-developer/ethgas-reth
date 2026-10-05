@@ -5,7 +5,7 @@ Streams each transaction as it is sequenced into a flashblock.
 | | |
 |---|---|
 | Method | `eth_subscribe` |
-| Transport | **WebSocket only** |
+| Transport | **WebSocket or IPC** |
 | Parameters | none, `true`, or a log filter |
 
 This carries far more inclusion confidence than the standard `newPendingTransactions`

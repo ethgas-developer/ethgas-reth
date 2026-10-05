@@ -62,9 +62,11 @@ tells one story. `eth_feeHistory` always uses the latest confirmed block.
 Code and storage at `pending`, and balances the builder did not report, come from the node's own
 execution of the flashblock transactions on top of the latest confirmed block. After the Amsterdam
 fork, that execution runs in the slot the builder sent, so `SLOTNUM` reads what it read for the
-builder. `eth_call`,
-`eth_estimateGas`, `eth_simulateV1` and the call-tracing methods run on that same state, in the
-block environment of the flashblock being built, so they all agree.
+builder. `eth_call`, `eth_estimateGas` and the call-tracing methods run on that same state, in the
+block environment of the flashblock being built, so they all agree. `eth_simulateV1` runs on that
+state too, but each simulated block takes the environment that follows the latest confirmed block:
+after a block that another builder made, its `COINBASE` and gas limit can differ from the
+flashblock's, and `PREVRANDAO` is 0 unless overridden.
 
 One window remains. A call at `pending` reads the pre-confirmed state twice, once for the block
 environment and once for the account state. When the pending block changes between the two reads,
@@ -106,10 +108,12 @@ Methods where this node does something you need to know about have their own pag
 `pending` behaviour. The rest behave as they do on any Ethereum node. With `pending`, an unlisted
 method that takes a block tag answers from the next block when the node has already executed it
 for its consensus client, else from the latest confirmed block; none of them reads the flashblock.
-Two exceptions: `eth_getBlockAccessList` returns `null` for `pending`, and `debug_getRawHeader`,
-`debug_getRawBlock`, `debug_getRawReceipts` and `debug_getRawTransactions` answer from that
-executed block or fail (`debug_getRawTransactions` returns an empty list), never from the latest
-confirmed block.
+Exceptions: `eth_getBlockAccessList`, `eth_getBlockAccessListByBlockNumber` and
+`eth_getBlockAccessListRaw` return `null` for `pending`. `debug_getRawReceipts` answers from that
+executed block, else fails. `debug_getRawHeader`, `debug_getRawBlock`,
+`debug_getRawBlockAccessList` and `reth_getBalanceChangesInBlock` always fail with `-32001`, and
+`debug_getRawTransactions` returns an empty list. None of them answers from the latest confirmed
+block.
 
 | Method | Description | Flashblocks `pending` |
 |---|---|:---:|

@@ -17,10 +17,13 @@ use jsonrpsee::{
 };
 use jsonrpsee_types::ErrorObjectOwned;
 use reth_primitives_traits::NodePrimitives;
-use reth_provider::{CanonStateNotifications, CanonStateSubscriptions, StateProvider};
+use reth_provider::{
+    BlockIdReader, CanonStateNotifications, CanonStateSubscriptions, StateProvider,
+};
 use reth_rpc::EthFilter;
 use reth_rpc_eth_api::{
-    EthApiTypes, EthFilterApiServer, FromEthApiError, RpcBlock, RpcReceipt, RpcTransaction,
+    EthApiTypes, EthFilterApiServer, FromEthApiError, RpcBlock, RpcNodeCore, RpcReceipt,
+    RpcTransaction,
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi, LoadState},
 };
 use reth_rpc_eth_types::EthApiError;
@@ -159,6 +162,26 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
     }
 }
 
+impl<Eth, FB> EthApiExt<Eth, FB>
+where
+    Eth: EthApiTypes + RpcNodeCore,
+    FB: FlashblocksAPI,
+{
+    /// The builder's balance for `address` in the snapshot, unless the engine holds an executed
+    /// block at least as new. `pending` is then that block, which the builder's map does not
+    /// describe: it can hold the builder's payout, or be another builder's block.
+    fn builder_balance(&self, address: Address) -> Option<U256> {
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        let snapshot = pending_blocks.as_ref()?;
+        if let Ok(Some(engine_pending)) = self.eth_api.provider().pending_block_num_hash() &&
+            engine_pending.number >= snapshot.latest_block_number()
+        {
+            return None;
+        }
+        snapshot.get_balance(address)
+    }
+}
+
 #[async_trait]
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
@@ -228,8 +251,7 @@ where
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.rpc_get_balance.increment(1);
-            let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            if let Some(balance) = pending_blocks.get_balance(address) {
+            if let Some(balance) = self.builder_balance(address) {
                 return Ok(balance);
             }
         }

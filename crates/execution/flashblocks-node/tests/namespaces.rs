@@ -1,13 +1,17 @@
 //! The `pending` tag on methods outside the default `eth,net,web3` modules: `ots_hasCode` and the
-//! call-tracing methods read the overlay; the block-replaying methods and `eth_callBundle` read
-//! canonical state.
+//! call-tracing methods read the overlay, and the tracers run in the flashblock's block
+//! environment; the block-replaying methods and `eth_callBundle` read canonical state.
 
 use DoubleCounter::DoubleCounterInstance;
 use alloy_consensus::TxType;
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::foldhash::HashMap};
+use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::{
+    Address, B256, Bytes, U256, address, bytes, keccak256, map::foldhash::HashMap,
+};
 use alloy_provider::Provider;
+use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
-use alloy_rpc_types_eth::TransactionRequest;
+use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
 use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
 use ethgas_node_runner::test_utils::{Account, DoubleCounter, slot_number_at};
 use ethgas_reth_flashblocks::payload::{
@@ -83,6 +87,24 @@ impl Setup {
             .count1()
             .into_transaction_request()
     }
+
+    fn count2(&self) -> TransactionRequest {
+        DoubleCounterInstance::new(self.counter, self.harness.provider())
+            .count2()
+            .into_transaction_request()
+    }
+}
+
+/// `NUMBER PUSH0 MSTORE TIMESTAMP PUSH1 32 MSTORE BASEFEE PUSH1 64 MSTORE COINBASE PUSH1 96 MSTORE
+/// PUSH1 128 PUSH0 RETURN`: init code that returns the four block-environment words as its code.
+const RETURN_BLOCK_ENV: Bytes = bytes!("0x435f5242602052486040524160605260805ff3");
+const ENV_TIMESTAMP: u64 = 1_700_000_000;
+const ENV_BASE_FEE: u64 = 7;
+const ENV_FEE_RECIPIENT: Address = address!("0x00000000000000000000000000000000000c0ffe");
+
+fn block_env_words(output: &Value) -> Result<Vec<U256>> {
+    let output: Bytes = output.as_str().expect("output").parse()?;
+    Ok(output.chunks(32).map(U256::from_be_slice).collect())
 }
 
 #[tokio::test]
@@ -163,6 +185,97 @@ async fn trace_call_many_and_raw_transaction_at_pending_read_the_snapshot() -> R
         client.request("trace_rawTransaction", (raw, vec!["trace"], "pending")).await?;
     let output: Bytes = trace["output"].as_str().expect("output").parse()?;
     assert_eq!(U256::from_be_slice(&output), one, "trace_rawTransaction must see the counter");
+
+    Ok(())
+}
+
+/// The call-tracing methods at `pending` run in the flashblock's block environment: its number,
+/// timestamp, base fee and fee recipient, not the latest block's.
+#[tokio::test]
+async fn call_tracing_at_pending_runs_in_the_flashblocks_block_environment() -> Result<()> {
+    let setup = Setup::new().await?;
+    let client = setup.harness.rpc_client()?;
+    let mut payload = setup.deployment_payload();
+    let base = payload.base.as_mut().expect("a base flashblock carries a base");
+    base.timestamp = ENV_TIMESTAMP;
+    base.base_fee_per_gas = U256::from(ENV_BASE_FEE);
+    base.fee_recipient = ENV_FEE_RECIPIENT;
+    setup.harness.send_flashblock(payload).await?;
+    let expected = vec![
+        U256::from(1),
+        U256::from(ENV_TIMESTAMP),
+        U256::from(ENV_BASE_FEE),
+        U256::from_be_slice(ENV_FEE_RECIPIENT.as_slice()),
+    ];
+    // A fee cap, so that the calls keep the block's base fee.
+    let create = TransactionRequest::default()
+        .from(Account::Alice.address())
+        .max_fee_per_gas(1_000_000_000)
+        .max_priority_fee_per_gas(0)
+        .input(TransactionInput::new(RETURN_BLOCK_ENV));
+
+    let debug_trace_call: Value = client
+        .request("debug_traceCall", (create.clone(), "pending", json!({ "tracer": "callTracer" })))
+        .await?;
+    let trace_call: Value =
+        client.request("trace_call", (create.clone(), ["trace"], "pending")).await?;
+    let trace_call_many: Value =
+        client.request("trace_callMany", (vec![(create, vec!["trace"])], "pending")).await?;
+    let (raw, _, _) = Account::Charlie.create_deployment_tx(RETURN_BLOCK_ENV, 0)?;
+    let trace_raw_transaction: Value =
+        client.request("trace_rawTransaction", (raw, vec!["trace"], "pending")).await?;
+
+    let environments = [
+        ("debug_traceCall", block_env_words(&debug_trace_call["output"])?),
+        ("trace_call", block_env_words(&trace_call["output"])?),
+        ("trace_callMany", block_env_words(&trace_call_many[0]["output"])?),
+        ("trace_rawTransaction", block_env_words(&trace_raw_transaction["output"])?),
+    ];
+    let wrong: Vec<_> = environments.iter().filter(|(_, words)| *words != expected).collect();
+    assert!(wrong.is_empty(), "not the flashblock's environment {expected:?}: {wrong:?}");
+
+    Ok(())
+}
+
+/// A state override at `pending` applies on top of the flashblock's state, through
+/// `debug_traceCall` and `eth_simulateV1` as through `eth_call`: the overridden slot reads the
+/// override, while the counter's other slot and its code stay as the flashblock left them.
+#[tokio::test]
+async fn state_overrides_at_pending_apply_on_top_of_the_flashblocks_state() -> Result<()> {
+    let setup = Setup::new().await?;
+    let provider = setup.harness.provider();
+    let client = setup.harness.rpc_client()?;
+    setup.harness.send_flashblock(setup.deployment_payload()).await?;
+    let count1_is_five = json!({
+        format!("{:#x}", setup.counter): {
+            "stateDiff": { format!("{:#x}", B256::ZERO): format!("{:#x}", B256::with_last_byte(5)) }
+        }
+    });
+    let expected = vec![U256::from(5), U256::from(1)];
+
+    let mut traced = Vec::new();
+    for call in [setup.count1(), setup.count2()] {
+        let options = json!({ "tracer": "callTracer", "stateOverrides": count1_is_five });
+        let trace: Value = client.request("debug_traceCall", (call, "pending", options)).await?;
+        // The call tracer leaves `output` out when the call returns nothing.
+        let output: Bytes = trace["output"].as_str().unwrap_or("0x").parse()?;
+        traced.push(U256::from_be_slice(&output));
+    }
+
+    let simulation = SimulatePayload {
+        block_state_calls: vec![SimBlock {
+            calls: vec![setup.count1().gas_limit(100_000), setup.count2().gas_limit(100_000)],
+            block_overrides: None,
+            state_overrides: Some(serde_json::from_value(count1_is_five)?),
+        }],
+        trace_transfers: false,
+        validation: false,
+        return_full_transactions: false,
+    };
+    let blocks = provider.simulate(&simulation).block_id(BlockNumberOrTag::Pending.into()).await?;
+    let simulated: Vec<U256> =
+        blocks[0].calls.iter().map(|call| U256::from_be_slice(&call.return_data)).collect();
+    assert_eq!((&traced, &simulated), (&expected, &expected), "(debug_traceCall, eth_simulateV1)");
 
     Ok(())
 }

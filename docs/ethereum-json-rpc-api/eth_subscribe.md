@@ -1,6 +1,6 @@
 # eth_subscribe
 
-Opens a real-time subscription over a WebSocket connection. Returns a subscription ID; events then arrive as unsolicited `eth_subscription` notifications.
+Opens a real-time subscription over a WebSocket or IPC connection. Returns a subscription ID; events then arrive as unsolicited `eth_subscription` notifications.
 
 | | |
 |---|---|
@@ -59,7 +59,7 @@ Opens a real-time subscription over a WebSocket connection. Returns a subscripti
 
 ## Behaviour at `pending` on this node
 
-Subscriptions require a WebSocket connection. They cannot be served over HTTP.
+Subscriptions need a WebSocket or IPC connection. They cannot be served over HTTP.
 
 `newFlashblockTransactions` takes three parameter forms:
 

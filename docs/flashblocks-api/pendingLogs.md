@@ -5,7 +5,7 @@ Streams logs from pre-confirmed transactions, as they are sequenced.
 | | |
 |---|---|
 | Method | `eth_subscribe` |
-| Transport | **WebSocket only** |
+| Transport | **WebSocket or IPC** |
 | Parameters | an optional log filter |
 
 ## Subscribe

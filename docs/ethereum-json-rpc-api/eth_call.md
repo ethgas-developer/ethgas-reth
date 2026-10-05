@@ -55,7 +55,9 @@ pre-confirmed transactions the builder has already sequenced.
 
 The block environment is the flashblock's own: `block.number`, `block.timestamp` and the base fee
 are those of the block being built, and after the Amsterdam fork so is the slot number that
-`SLOTNUM` reads. A state override applies on top of the flashblock's state, so
+`SLOTNUM` reads. At any block tag, a call whose fee fields are absent or 0 runs with a base fee of
+0, so `BASEFEE` reads 0; set `gasPrice` or `maxFeePerGas` to read the block's base fee. A state
+override applies on top of the flashblock's state, so
 overriding one field of an account keeps the account's other fields as the flashblock left them.
 
 Without flashblock data, `pending` is reth's own: the latest confirmed block's state in the
@@ -68,4 +70,4 @@ This node supports two extra parameters that the standard JSON-RPC shape does no
 
 | Code | Message |
 |---|---|
-| `-32000` | `execution reverted` — the revert reason, where one exists, is in the error `data` |
+| `3` | `execution reverted` — the revert data, where one exists, is in the error `data` |

@@ -60,4 +60,4 @@ fork so is the slot number that `SLOTNUM` reads.
 
 | Code | Message |
 |---|---|
-| `-32000` | `execution reverted` |
+| `3` | `execution reverted` — the revert data, where one exists, is in the error `data` |

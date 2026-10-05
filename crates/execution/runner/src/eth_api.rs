@@ -291,6 +291,32 @@ where
         Ok(async move { proof.await.map_err(api_err) })
     }
 
+    /// Refuses more than [`MAX_PROOF_KEYS`] storage keys over all the targets together, for the
+    /// same reason as [`Self::get_proof`].
+    fn get_multi_proof(
+        &self,
+        targets: Vec<(Address, Vec<B256>)>,
+        block_id: Option<BlockId>,
+    ) -> Result<
+        impl Future<Output = Result<Vec<EIP1186AccountProofResponse>, Self::Error>> + Send,
+        Self::Error,
+    >
+    where
+        Self: EthApiSpec,
+    {
+        let api_err = |err: EthApiError| -> Self::Error { err.into() };
+        let keys = targets.iter().map(|(_, slots)| slots.len()).sum::<usize>();
+        if keys > MAX_PROOF_KEYS {
+            return Err(api_err(EthApiError::InvalidParams(format!(
+                "too many storage keys: max {MAX_PROOF_KEYS}, got {keys}"
+            ))));
+        }
+        let block_id = block_id.unwrap_or_default();
+        self.ensure_within_proof_window(block_id)?;
+        let proofs = self.inner.get_multi_proof(targets, Some(block_id)).map_err(api_err)?;
+        Ok(async move { proofs.await.map_err(api_err) })
+    }
+
     /// Refuses `pending` while an overlay is served.
     ///
     /// `eth_getProof`, `eth_getMultiProof` and `eth_getAccount` are the only callers. The overlay

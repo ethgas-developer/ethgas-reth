@@ -6,7 +6,7 @@ its receipt.
 | | |
 |---|---|
 | Flashblocks `pending` | n/a — this method takes no block parameter |
-| Transport | HTTP or WebSocket |
+| Transport | HTTP, WebSocket or IPC |
 
 This is the method to use when you want pre-confirmation rather than a transaction hash. It saves
 you submitting with `eth_sendRawTransaction` and then polling
@@ -86,6 +86,9 @@ builder has sequenced your transaction, not that it is in a confirmed block.
 | Code | Message |
 |---|---|
 | `-32000` | `nonce too low` |
-| `-32000` | `insufficient funds for gas * price + value` |
+| `-32003` | `insufficient funds for gas * price + value` |
 | `-32000` | `already known` |
 | `-32000` | `replacement transaction underpriced` |
+
+The message can carry details after a colon. These are the common refusals; the node returns
+reth's other transaction pool errors too.

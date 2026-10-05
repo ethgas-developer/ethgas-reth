@@ -5,7 +5,7 @@ Simulates one or more bundles of calls against pre-confirmed state, without subm
 | | |
 |---|---|
 | Flashblocks `pending` | **Yes** — simulates against the flashblock being built |
-| Transport | HTTP or WebSocket |
+| Transport | HTTP, WebSocket or IPC |
 
 ## Parameters
 
@@ -102,7 +102,9 @@ builder has already sequenced but that are not yet in a sealed block. The simula
 numbered from the latest confirmed block, and each one starts from the state the previous one
 left, on top of the flashblock's state. After the Amsterdam fork their slot numbers also count on
 from the latest confirmed block, one per simulated block, so they differ from the builder's slot
-when a slot was missed.
+when a slot was missed. Each simulated block takes the block environment that follows the latest
+confirmed block, not the flashblock's: after a block that another builder made, its `COINBASE` and
+gas limit can differ from the flashblock's, and `PREVRANDAO` is 0 unless overridden.
 
 Nothing is submitted and no state is persisted. To submit and wait for pre-confirmation instead,
 use [`eth_sendRawTransactionSync`](./eth_sendRawTransactionSync.md).
@@ -111,5 +113,8 @@ use [`eth_sendRawTransactionSync`](./eth_sendRawTransactionSync.md).
 
 | Code | Message |
 |---|---|
-| `-32000` | `execution reverted` — the revert reason, where one exists, is in the error `data` |
-| `-32602` | Invalid params, including a `blockStateCalls` array longer than the node allows |
+| `-32602` | Invalid params, such as an empty `blockStateCalls` array (`calls are empty.`) |
+| `-38026` | `too many blocks` — more than the node allows, 256 by default |
+
+A reverted call does not fail the request: its entry in `calls` has `status` `0x0` and an `error`
+with code 3.

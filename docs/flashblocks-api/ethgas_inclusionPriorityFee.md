@@ -6,7 +6,7 @@ where the number came from and how old it is.
 | | |
 |---|---|
 | Flashblocks `pending` | n/a — this method takes no block parameter |
-| Transport | HTTP or WebSocket. Available only with `--flashblocks-url`, on every configured transport, whatever `--http.api` says |
+| Transport | HTTP, WebSocket or IPC. Available only with `--flashblocks-url`, on every configured transport, whatever `--http.api` says |
 
 ## Parameters
 

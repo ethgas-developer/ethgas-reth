@@ -20,7 +20,7 @@ use alloy_provider::{Provider, network::TransactionResponse};
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{
-    Filter, TransactionInput, TransactionRequest,
+    EIP1186AccountProofResponse, Filter, TransactionInput, TransactionRequest,
     error::EthRpcErrorCode,
     state::{AccountOverride, StateOverride},
 };
@@ -840,6 +840,33 @@ async fn test_get_proof_caps_the_storage_keys_at_1024() -> Result<()> {
     Ok(())
 }
 
+/// `eth_getMultiProof` takes the same cap over all its accounts together.
+#[tokio::test]
+async fn test_get_multi_proof_caps_the_storage_keys_at_1024_in_total() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let client = setup.harness.rpc_client()?;
+    let keys: Vec<B256> =
+        (0..513u64).map(|slot| B256::from(U256::from(slot).to_be_bytes::<32>())).collect();
+    let (alice, bob) = (Account::Alice.address(), Account::Bob.address());
+
+    let targets = vec![(alice, keys[..512].to_vec()), (bob, keys.clone())];
+    let err = client
+        .request::<_, Vec<EIP1186AccountProofResponse>>("eth_getMultiProof", (targets, "latest"))
+        .await
+        .expect_err("1025 keys in total must be refused");
+    let message = err.to_string();
+    assert!(message.contains("-32602"), "expected an invalid-params error, got: {message}");
+    assert!(message.contains("too many storage keys: max 1024, got 1025"), "got: {message}");
+
+    let targets = vec![(alice, keys[..512].to_vec()), (bob, keys[..512].to_vec())];
+    let proofs: Vec<EIP1186AccountProofResponse> =
+        client.request("eth_getMultiProof", (targets, "latest")).await?;
+    assert_eq!(proofs.len(), 2);
+    assert!(proofs.iter().all(|proof| proof.storage_proof.len() == 512));
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_get_proof_at_pending_answers_from_the_engine_block() -> Result<()> {
     let setup = TestSetup::new().await?;
@@ -1442,6 +1469,40 @@ async fn test_get_balance_pending_prefers_the_builder_balance_map() -> Result<()
     assert_eq!(
         provider.get_account_info(TEST_ADDRESS).pending().await?.balance,
         U256::from(PENDING_BALANCE)
+    );
+
+    Ok(())
+}
+
+/// While the engine holds an executed block at least as new as the snapshot, `eth_getBalance` at
+/// `pending` answers from that block, as the other state methods do, not from the builder's map.
+#[tokio::test]
+async fn test_get_balance_pending_defers_to_the_engine_pending_block() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    setup.send_flashblock(setup.create_first_payload()).await?;
+    let mut second = setup.create_second_payload();
+    second.metadata.new_account_balances.insert(MAP_ONLY_ADDRESS, U256::from(MAP_ONLY_BALANCE));
+    setup.send_flashblock(second).await?;
+    assert_eq!(
+        provider.get_balance(MAP_ONLY_ADDRESS).pending().await?,
+        U256::from(MAP_ONLY_BALANCE)
+    );
+
+    let (transfer_tx, _) = Account::Charlie.sign_txn_request(
+        TransactionRequest::default().to(MAP_ONLY_ADDRESS).value(U256::from(999)).nonce(0),
+    )?;
+    setup.harness.submit_block_from_transactions(vec![transfer_tx]).await?;
+    assert_eq!(provider.get_block_number().await?, 0, "the block must not be canonical");
+
+    assert_eq!(
+        provider.get_balance(MAP_ONLY_ADDRESS).pending().await?,
+        U256::from(999),
+        "the engine block's balance, not the builder's map"
+    );
+    assert_eq!(
+        provider.get_account_info(MAP_ONLY_ADDRESS).pending().await?.balance,
+        U256::from(999)
     );
 
     Ok(())

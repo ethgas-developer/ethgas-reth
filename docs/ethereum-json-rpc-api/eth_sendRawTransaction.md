@@ -44,15 +44,20 @@ Submits a signed transaction to the node.
 This method takes no block parameter. It returns as soon as the transaction is accepted, and the
 hash it returns says nothing about inclusion.
 
-**To submit and wait for pre-confirmation in one call, use `eth_sendRawTransactionSync`.** It
-returns the receipt once the transaction appears in a flashblock, with a default and maximum
-timeout of 6000 ms.
+**To submit and wait for pre-confirmation in one call, use
+[`eth_sendRawTransactionSync`](../flashblocks-api/eth_sendRawTransactionSync.md).** It returns the
+receipt once the transaction appears in a flashblock. Its optional `timeout_ms` is clamped to the
+node's configured maximum, `--rpc.send-raw-transaction-sync-timeout`, 30 s unless the operator
+sets it. `0` or absent waits that maximum.
 
 ## Errors
 
 | Code | Message |
 |---|---|
 | `-32000` | `nonce too low` |
-| `-32000` | `insufficient funds for gas * price + value` |
+| `-32003` | `insufficient funds for gas * price + value` |
 | `-32000` | `already known` |
 | `-32000` | `replacement transaction underpriced` |
+
+The message can carry details after a colon. These are the common refusals; the node returns
+reth's other transaction pool errors too.

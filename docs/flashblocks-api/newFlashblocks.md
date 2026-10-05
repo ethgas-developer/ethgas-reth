@@ -5,7 +5,7 @@ Streams the pending block each time a new flashblock is applied to it.
 | | |
 |---|---|
 | Method | `eth_subscribe` |
-| Transport | **WebSocket only** |
+| Transport | **WebSocket or IPC** |
 | Parameters | none |
 
 ## Subscribe

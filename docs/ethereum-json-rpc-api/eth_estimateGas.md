@@ -11,7 +11,7 @@ Estimates the gas a transaction would consume.
 | Name | Type | Required | Description |
 |---|---|---|---|
 | `transaction` | object | yes | The transaction. Fields: `from`, `to`, `gas`, `gasPrice`, `maxFeePerGas`, `maxPriorityFeePerGas`, `value`, `data` |
-| `block` | string | no | Block number in hex, or a tag. Defaults to `"latest"` |
+| `block` | string | no | Block number in hex, or a tag. Defaults to `"pending"` while flashblock data is served, else `"latest"` |
 | `stateOverrides` | object | no | Per-account state overrides |
 | `blockOverrides` | object | no | Block field overrides |
 
@@ -55,6 +55,10 @@ The estimate runs against the flashblock being built, so it accounts for state c
 pre-confirmed transactions. It runs in the flashblock's own block environment: `block.number`,
 `block.timestamp` and the base fee are those of the block being built, and after the Amsterdam
 fork so is the slot number that `SLOTNUM` reads.
+
+**Without a block parameter**, the estimate runs at `pending` while flashblock data is served, so
+it sees the pre-confirmed transactions before it, such as an approval. Without flashblock data it
+runs at `latest`.
 
 ## Errors
 

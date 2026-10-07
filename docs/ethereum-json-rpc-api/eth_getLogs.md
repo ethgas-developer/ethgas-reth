@@ -93,6 +93,10 @@ but this does not:
 {"fromBlock": "pending", "toBlock": "latest"}
 ```
 
+A numeric `fromBlock` must be at most the latest block number. A range from the pending block's own
+number to `pending` is refused with `-32602` and `invalid block range params`; use
+`"fromBlock": "pending"` for the pending block alone.
+
 **Pending logs carry `blockHash: 0x000…0`,** because the flashblock has no hash. A consumer that
 groups logs by `blockHash` will collapse every pending log into one bucket. Group by
 `transactionHash` instead while a log is pending.

@@ -69,18 +69,23 @@ None.
 ## Behaviour on this node
 
 The builder publishes the fee in every flashblock it seals. The node keeps the latest one and
-serves it while it is at most `--flashblocks.fee-max-age` old, 15 s by default. After that, or when
-the builder published none, the node serves reth's own suggestion, marked `"fallback"`, without the
-three builder fields. reth's suggestion can sit near zero on this chain, because the last
+serves it while three things hold: its block is not yet sealed, it is at most
+`--flashblocks.fee-max-age` old (15 s by default), and it is at most `--flashblocks.fee-ceiling`
+(1,000 gwei by default). Otherwise, or when the builder published none, the node serves reth's own
+suggestion, marked `"fallback"`, without the three builder fields. So after the builder's block is
+sealed, a slot that another builder builds gets the fallback. reth's suggestion can sit near zero on this chain, because the last
 flashblock of a slot admits every transaction whatever its tip.
 
-The same number reaches two standard methods:
+The same number reaches three standard methods:
 
 - `eth_maxPriorityFeePerGas` returns `maxPriorityFeePerGas` as a bare quantity.
 - `eth_gasPrice` returns the next block's base fee plus `maxPriorityFeePerGas` while the builder's
-  value is fresh, and reth's own gas price otherwise.
+  value is served, and reth's own gas price otherwise.
+- `eth_fillTransaction` uses it as the priority fee of a request that sets no fee, and twice the
+  base fee plus it as the maximum fee.
 
-Wallets that estimate from `eth_feeHistory` do not see it.
+Wallets that estimate from `eth_feeHistory`, such as alloy's default estimator, or from their own
+fee service, such as MetaMask, do not see it.
 
 A transaction that pays less than this fee still lands in the same block, in its last flashblock,
 because that flashblock admits every transaction. This is the price of the next flashblock, not

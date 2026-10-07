@@ -80,3 +80,8 @@ into that block so far. If you want only what is new, subscribe to
 
 **To follow confirmed blocks instead**, use the standard `newHeads` subscription. It does not fire
 per flashblock.
+
+**Limits.** One connection holds at most 4 `newFlashblocks` subscriptions and 32 of the other two
+kinds, a subscription whose client stops reading ends, and a subscriber that falls behind skips
+flashblocks. See
+[`eth_subscribe`](../ethereum-json-rpc-api/eth_subscribe.md#limits).

@@ -2,8 +2,11 @@
 
 use std::time::Duration;
 
+use alloy_primitives::U256;
 use ethgas_reth_flashblocks::FlashblocksConfig;
 use url::Url;
+
+const WEI_PER_GWEI: u64 = 1_000_000_000;
 
 /// CLI Arguments
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -45,6 +48,16 @@ pub struct Args {
         requires = "flashblocks_url"
     )]
     pub flashblocks_fee_max_age: Duration,
+
+    /// The highest builder inclusion fee served, in gwei. A higher fee gives way to the node's own
+    /// suggestion.
+    #[arg(
+        long = "flashblocks.fee-ceiling",
+        value_name = "GWEI",
+        default_value = "1000",
+        requires = "flashblocks_url"
+    )]
+    pub flashblocks_fee_ceiling: u64,
 }
 
 fn parse_positive_duration(value: &str) -> Result<Duration, String> {
@@ -61,6 +74,9 @@ impl From<&Args> for Option<FlashblocksConfig> {
             FlashblocksConfig::new(url, args.max_pending_blocks_depth)
                 .with_subscriber_ping_interval(args.flashblocks_ping_interval)
                 .with_inclusion_fee_max_age(args.flashblocks_fee_max_age)
+                .with_inclusion_fee_ceiling(
+                    U256::from(args.flashblocks_fee_ceiling) * U256::from(WEI_PER_GWEI),
+                )
         })
     }
 }

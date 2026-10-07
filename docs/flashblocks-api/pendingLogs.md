@@ -69,3 +69,8 @@ would collapse into one bucket. Group by `transactionHash` instead.
 **A pre-confirmed log can still disappear.** Nothing is final until the block is sealed. Treat these
 as early signals and reconcile against the standard `logs` subscription, which fires on confirmed
 blocks.
+
+**Limits.** One connection holds at most 4 `newFlashblocks` subscriptions and 32 of the other two
+kinds, a subscription whose client stops reading ends, and a subscriber that falls behind skips
+flashblocks. See
+[`eth_subscribe`](../ethereum-json-rpc-api/eth_subscribe.md#limits).

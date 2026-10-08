@@ -50,4 +50,5 @@ pub mod rpc;
 pub use rpc::{
     EthApiExt, EthApiOverrideServer, EthFeeOverrideServer, EthPubSub, EthPubSubApiServer,
     EthgasApiExt, EthgasApiServer, ExtendedSubscriptionKind, FlashblocksSubscriptionKind,
+    MAX_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION, MAX_NEW_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION,
 };

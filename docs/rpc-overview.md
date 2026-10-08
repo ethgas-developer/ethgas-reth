@@ -47,7 +47,8 @@ Two guarantees follow, and both are deliberate:
 2. **A sealed block always wins.** If the network has already produced the block, you are served
    that block rather than a reconstruction of it.
 
-Flashblock data the node cannot use counts as no data. After the Amsterdam fork, the builder must
+Flashblock data the node cannot use counts as no data, for example a flashblock whose receipt
+status contradicts the node's own execution of the transaction. After the Amsterdam fork, the builder must
 send each block's slot number, and the node does not serve a block whose flashblocks lack it.
 
 The second guarantee has one visible effect. When the node has executed the next block for its
@@ -66,7 +67,8 @@ builder. `eth_call`, `eth_estimateGas` and the call-tracing methods run on that 
 block environment of the flashblock being built, so they all agree. `eth_simulateV1` runs on that
 state too, but each simulated block takes the environment that follows the latest confirmed block:
 after a block that another builder made, its `COINBASE` and gas limit can differ from the
-flashblock's, and `PREVRANDAO` is 0 unless overridden.
+flashblock's, and `PREVRANDAO` is 0 unless overridden. While the node holds the next block executed
+but not yet canonical, the simulated blocks follow that block instead.
 
 One window remains. A call at `pending` reads the pre-confirmed state twice, once for the block
 environment and once for the account state. When the pending block changes between the two reads,
@@ -105,7 +107,9 @@ The node serves no flashblock state for a block whose flashblocks carry no slot 
 
 Methods where this node does something you need to know about have their own page under
 `ethereum-json-rpc-api/`, with parameters, return shape, a worked example and their exact
-`pending` behaviour. The rest behave as they do on any Ethereum node. With `pending`, an unlisted
+`pending` behaviour. The rest behave as they do on any Ethereum node. The bundle simulators
+`eth_callBundle`, `eth_callMany` and `debug_traceCallMany` are among them: at `pending` they do not
+see the flashblock; `eth_simulateV1` and `trace_callMany` do. With `pending`, an unlisted
 method that takes a block tag answers from the next block when the node has already executed it
 for its consensus client, else from the latest confirmed block; none of them reads the flashblock.
 Exceptions: `eth_getBlockAccessList`, `eth_getBlockAccessListByBlockNumber` and
@@ -147,12 +151,16 @@ block.
 | `eth_blockNumber` | Latest confirmed block number | n/a |
 | `eth_gasPrice` | Current gas price. With flashblocks, the next block's base fee plus the builder's inclusion fee; see [`ethgas_inclusionPriorityFee`](./flashblocks-api/ethgas_inclusionPriorityFee.md) | n/a |
 | `eth_maxPriorityFeePerGas` | Suggested priority fee. With flashblocks, the builder's inclusion fee; see [`ethgas_inclusionPriorityFee`](./flashblocks-api/ethgas_inclusionPriorityFee.md) | n/a |
+| `eth_fillTransaction` | Fill a transaction's defaults. With flashblocks, the priority fee of a request that sets none is the builder's inclusion fee, the nonce of a request that sets none is the `pending` transaction count, and the gas is estimated at `pending` | n/a |
 | `eth_feeHistory` | Historical fee data | **No** |
 | `eth_chainId` | Chain ID | n/a |
 | `eth_syncing` | Sync status | n/a |
 | `net_version` | Network ID | n/a |
 | `web3_clientVersion` | Client version. Carries an `ethgas/v<version>` segment | n/a |
 | [`eth_subscribe`](./ethereum-json-rpc-api/eth_subscribe.md) / `eth_unsubscribe` | Manage subscriptions | see below |
+
+What common client libraries do with these answers is on [Client libraries](./client-libraries.md).
+Requests and answers for the flashblocks-aware methods, used together, are on [Examples](./examples/README.md).
 
 #### `eth_sendRawTransactionSync`
 

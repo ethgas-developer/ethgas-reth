@@ -39,7 +39,7 @@ use tracing::{debug, error, warn};
 use crate::{
     block_assembler::BlockAssembler,
     cache::FlashblockCache,
-    error::{ProtocolError, ProviderError, StateProcessorError},
+    error::{ExecutionError, ProtocolError, ProviderError, StateProcessorError},
     metrics::Metrics,
     payload::FlashBlock,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
@@ -284,13 +284,21 @@ where
         }
 
         let started = Instant::now();
-        let result = self.process_flashblock(prev_pending_blocks, &flashblock);
+        let result = self.process_flashblock(prev_pending_blocks.clone(), &flashblock);
         self.metrics.block_processing_duration.record(started.elapsed().as_secs_f64());
 
         match result {
             Ok(new_pending_blocks) => {
                 let new_pending_blocks = self.publishable(new_pending_blocks);
-                if let Some(ref pb) = new_pending_blocks {
+                // A duplicate flashblock leaves the snapshot as it was. Sending it again would
+                // stream its transactions and logs to every subscriber a second time.
+                let unchanged = prev_pending_blocks
+                    .as_ref()
+                    .zip(new_pending_blocks.as_ref())
+                    .is_some_and(|(prev, new)| Arc::ptr_eq(prev, new));
+                if let Some(ref pb) = new_pending_blocks &&
+                    !unchanged
+                {
                     _ = self.sender.send(Arc::clone(pb));
                 }
                 self.record_pending_snapshot(new_pending_blocks.as_deref());
@@ -835,8 +843,8 @@ where
                             sender,
                             reason: e.to_string(),
                         })?;
-                    // Pending serves the producer's receipt beside this node's state, so a
-                    // differing status means the two executions disagree.
+                    // Pending serves the producer's receipt beside this node's state. When the
+                    // two executions disagree on the outcome, neither story is served.
                     if result.is_success() != receipt.status() {
                         self.metrics.transaction_status_mismatch.increment(1);
                         warn!(
@@ -847,6 +855,11 @@ where
                             producer_gas_used = tx_gas_used,
                             %result,
                         );
+                        return Err(ExecutionError::StatusMismatch {
+                            tx_hash: *transaction.tx_hash(),
+                            producer_success: receipt.status(),
+                        }
+                        .into());
                     }
                     pending_blocks_builder
                         .with_transaction_state(*transaction.tx_hash(), state.clone());

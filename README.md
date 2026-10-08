@@ -53,7 +53,8 @@ RUST_LOG=info,ethgas_reth_flashblocks=debug \
 | `--flashblocks-url <URL>` | WebSocket endpoint streaming flashblock updates (alias `--websocket-url`). Enables flashblocks when set. | _disabled_ |
 | `--max-pending-blocks-depth <N>` | Max pending blocks to retain in memory. | `3` |
 | `--flashblocks.ping-interval <DURATION>` | Interval between upstream websocket ping frames, and also the pong deadline: a reconnect is triggered once a ping goes unanswered for one interval, so a dead upstream is detected after at most two. Accepts humantime durations (`500ms`, `5s`, `1m`). Requires `--flashblocks-url`. | `2s` |
-| `--flashblocks.fee-max-age <DURATION>` | How long the builder's inclusion fee is served after its flashblock arrived, by `ethgas_inclusionPriorityFee`, `eth_maxPriorityFeePerGas` and `eth_gasPrice`. Requires `--flashblocks-url`. | `15s` |
+| `--flashblocks.fee-max-age <DURATION>` | How long the builder's inclusion fee is served after its flashblock arrived, and at most until its block is sealed, by `ethgas_inclusionPriorityFee`, `eth_maxPriorityFeePerGas`, `eth_gasPrice` and `eth_fillTransaction`. Requires `--flashblocks-url`. | `15s` |
+| `--flashblocks.fee-ceiling <GWEI>` | The highest builder inclusion fee served, in gwei; a higher one gives way to the node's own suggestion. Requires `--flashblocks-url`. | `1000` |
 
 When `--flashblocks-url` is set, requests with the `pending` block tag are
 served from flashblock-derived state, and the following extra subscriptions are

@@ -5,6 +5,7 @@
 //! by launching a full local Ethereum node with the flashblocks test extension.
 
 use std::{
+    collections::HashSet,
     str::FromStr,
     time::{Duration, Instant},
 };
@@ -27,7 +28,8 @@ use alloy_rpc_types_eth::{
 use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
 use ethgas_node_runner::test_utils::{Account, BLOCK_TIME_SECONDS, DoubleCounter, slot_number_at};
 use ethgas_reth_flashblocks::{
-    FlashblocksAPI,
+    FlashblocksAPI, MAX_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION,
+    MAX_NEW_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION,
     payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata},
 };
 use eyre::Result;
@@ -256,6 +258,45 @@ impl TestSetup {
         let counter =
             DoubleCounterInstance::new(self.txn_details.counter_address, self.harness.provider());
         counter.count2().into_transaction_request()
+    }
+
+    /// Flashblock 1 of block 1 with `count` transfers from Alice to Bob, nonces 1 onwards.
+    fn many_transfers_payload(&self, count: u64) -> FlashBlock {
+        let mut transactions = Vec::new();
+        let mut receipts = HashMap::default();
+        for nonce in 1..=count {
+            let (transaction, hash) = Account::Alice
+                .sign_txn_request(
+                    TransactionRequest::default()
+                        .to(Account::Bob.address())
+                        .value(U256::from(1))
+                        .gas_limit(21_000)
+                        .nonce(nonce),
+                )
+                .expect("should be able to sign a transfer");
+            transactions.push(transaction);
+            receipts.insert(
+                hash,
+                Receipt {
+                    tx_type: alloy_consensus::TxType::Eip1559,
+                    success: true,
+                    cumulative_gas_used: 21_000 * nonce,
+                    logs: vec![],
+                },
+            );
+        }
+        FlashBlock {
+            payload_id: PayloadId::new([0; 8]),
+            index: 1,
+            base: None,
+            diff: ExecutionPayloadFlashblockDeltaV1 { transactions, ..Default::default() },
+            metadata: Metadata {
+                block_number: 1,
+                receipts,
+                new_account_balances: HashMap::default(),
+                inclusion_fee: None,
+            },
+        }
     }
 
     async fn send_flashblock(&self, flashblock: FlashBlock) -> Result<()> {
@@ -638,6 +679,151 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> Result<()> {
         received.push(notif["params"]["result"].as_str().expect("hash string").to_string());
     }
     assert_eq!(received.len(), 5);
+
+    Ok(())
+}
+
+/// Sends one request over the socket and returns the response with its id, skipping notifications.
+async fn ws_request(
+    ws: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
+    ws.send(Message::Text(
+        json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string().into(),
+    ))
+    .await?;
+    loop {
+        let message = ws.next().await.unwrap()?;
+        let response: serde_json::Value = serde_json::from_str(message.to_text()?)?;
+        if response["id"] == id {
+            return Ok(response);
+        }
+    }
+}
+
+/// One connection holds at most `MAX_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION` `pendingLogs` and
+/// `newFlashblockTransactions` subscriptions together. The next one is refused; an unsubscribe
+/// frees a slot, and another connection has its own slots.
+#[tokio::test]
+async fn test_flashblocks_subscriptions_per_connection_are_capped() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let ws_url = setup.harness.ws_url();
+    let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+    let mut subscriptions = Vec::new();
+    for id in 0..MAX_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION as u64 {
+        subscriptions
+            .push(ws_subscribe(&mut ws_stream, id, json!(["newFlashblockTransactions"])).await?);
+    }
+
+    let refused = ws_request(&mut ws_stream, 1000, "eth_subscribe", json!(["pendingLogs"])).await?;
+    assert_eq!(refused["error"]["code"], -32006, "the next subscription is refused: {refused}");
+
+    let (mut other_stream, _) = connect_async(&ws_url).await?;
+    ws_subscribe(&mut other_stream, 1, json!(["pendingLogs"])).await?;
+
+    let unsubscribed =
+        ws_request(&mut ws_stream, 1001, "eth_unsubscribe", json!([subscriptions[0]])).await?;
+    assert_eq!(unsubscribed["result"], true);
+    // The slot is given back when the subscription's task ends, just after the unsubscribe.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut id = 1002;
+    loop {
+        let response =
+            ws_request(&mut ws_stream, id, "eth_subscribe", json!(["newFlashblockTransactions"]))
+                .await?;
+        if response["result"].is_string() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the unsubscribe freed no slot: {response}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        id += 1;
+    }
+
+    Ok(())
+}
+
+/// One connection holds at most `MAX_NEW_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION` `newFlashblocks`
+/// subscriptions, counted apart from the per-item kinds.
+#[tokio::test]
+async fn test_new_flashblocks_subscriptions_per_connection_are_capped_apart() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let (mut ws_stream, _) = connect_async(&setup.harness.ws_url()).await?;
+
+    for id in 0..MAX_NEW_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION as u64 {
+        ws_subscribe(&mut ws_stream, id, json!(["newFlashblocks"])).await?;
+    }
+    let refused =
+        ws_request(&mut ws_stream, 1000, "eth_subscribe", json!(["newFlashblocks"])).await?;
+    assert_eq!(refused["error"]["code"], -32006, "the next one is refused: {refused}");
+    assert!(
+        refused["error"]["message"].as_str().unwrap_or_default().contains("newFlashblocks"),
+        "the message names the kind: {refused}"
+    );
+
+    ws_subscribe(&mut ws_stream, 1001, json!(["pendingLogs"])).await?;
+
+    Ok(())
+}
+
+/// A flashblock of many transactions streams to a client that reads as fast as the connection
+/// drains: the hold-back waits only while the connection is over its limit, and looks again every
+/// millisecond.
+#[tokio::test]
+async fn test_a_flashblock_of_many_transactions_streams_without_delay() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let (mut ws_stream, _) = connect_async(&setup.harness.ws_url()).await?;
+    let subscription_id =
+        ws_subscribe(&mut ws_stream, 1, json!(["newFlashblockTransactions"])).await?;
+    setup.send_flashblock(setup.create_first_payload()).await?;
+    let count = 300;
+    setup.send_flashblock(setup.many_transfers_payload(count)).await?;
+
+    // One hash from the first flashblock, then the burst.
+    let mut burst_started = None;
+    for received in 0..=count {
+        let message =
+            tokio::time::timeout(Duration::from_secs(10), ws_stream.next()).await?.unwrap()?;
+        let notification: serde_json::Value = serde_json::from_str(message.to_text()?)?;
+        assert_eq!(notification["params"]["subscription"], subscription_id);
+        if received == 1 {
+            burst_started = Some(Instant::now());
+        }
+    }
+    let spread = burst_started.expect("the burst arrived").elapsed();
+    assert!(spread < Duration::from_millis(100), "{count} hashes took {spread:?}");
+
+    Ok(())
+}
+
+/// A flashblock received twice changes nothing, so no subscriber sees its transactions again.
+#[tokio::test]
+async fn test_a_duplicate_flashblock_is_not_streamed_again() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let (mut ws_stream, _) = connect_async(&setup.harness.ws_url()).await?;
+    let subscription_id =
+        ws_subscribe(&mut ws_stream, 1, json!(["newFlashblockTransactions"])).await?;
+
+    let first = setup.create_first_payload();
+    setup.send_flashblock(first.clone()).await?;
+    setup.send_flashblock(first).await?;
+    setup.send_flashblock(setup.create_second_payload()).await?;
+
+    // One hash from the first flashblock, five from the second.
+    let mut hashes = Vec::new();
+    for _ in 0..6 {
+        let message =
+            tokio::time::timeout(Duration::from_secs(5), ws_stream.next()).await?.unwrap()?;
+        let notification: serde_json::Value = serde_json::from_str(message.to_text()?)?;
+        assert_eq!(notification["params"]["subscription"], subscription_id);
+        hashes.push(notification["params"]["result"].as_str().expect("a hash").to_string());
+    }
+    let unique: HashSet<_> = hashes.iter().collect();
+    assert_eq!(unique.len(), 6, "each transaction is streamed once: {hashes:?}");
 
     Ok(())
 }
@@ -1298,7 +1484,7 @@ fn as_address(value: &serde_json::Value) -> Address {
 }
 
 /// Without a snapshot, every override answers `pending` from canonical state. A block built from
-/// the pool would show the deployment, count the nonce, and list the receipt.
+/// the pool would show the deployment and list the receipt. Only the nonce counts the pool.
 #[tokio::test]
 async fn test_pending_without_a_snapshot_answers_from_canonical_state_not_the_pool() -> Result<()> {
     let setup = TestSetup::new().await?;
@@ -1310,7 +1496,7 @@ async fn test_pending_without_a_snapshot_answers_from_canonical_state_not_the_po
     let _pool_only =
         provider.send_raw_transaction(&setup.txn_details.counter_deployment_tx).await?;
 
-    assert_eq!(provider.get_transaction_count(deployer).pending().await?, 0);
+    assert_eq!(provider.get_transaction_count(deployer).pending().await?, 1);
     assert_eq!(provider.get_balance(deployer).pending().await?, latest_balance);
     let count1: Bytes = client.request("eth_call", (setup.count1(), "pending")).await?;
     assert!(count1.is_empty(), "a contract that exists only in the pool must not answer");
@@ -1338,6 +1524,98 @@ async fn test_pending_without_a_snapshot_answers_from_canonical_state_not_the_po
     Ok(())
 }
 
+/// The pending nonce counts this node's pool on top of the flashblocks, so two transactions sent
+/// before either is pre-confirmed get two nonces.
+#[tokio::test]
+async fn test_pending_nonce_counts_the_pool_on_top_of_the_flashblocks() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    let deployer = Account::Deployer.address();
+    setup.send_flashblock(setup.create_first_payload()).await?;
+
+    let _deployment =
+        provider.send_raw_transaction(&setup.txn_details.counter_deployment_tx).await?;
+    let _increment = provider.send_raw_transaction(&setup.txn_details.counter_increment_tx).await?;
+    assert_eq!(
+        provider.get_transaction_count(deployer).pending().await?,
+        2,
+        "two transactions in the pool, none in a flashblock"
+    );
+
+    setup.send_flashblock(setup.create_second_payload()).await?;
+    assert_eq!(
+        provider.get_transaction_count(deployer).pending().await?,
+        3,
+        "three in the flashblocks, the pool's two among them"
+    );
+
+    Ok(())
+}
+
+/// `eth_fillTransaction` fills a missing nonce as `eth_getTransactionCount` answers `pending`:
+/// after the account's pre-confirmed transactions, which are in no mempool.
+#[tokio::test]
+async fn test_fill_transaction_counts_the_flashblocks_in_its_nonce() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    setup.send_test_payloads().await?;
+
+    let request = json!({
+        "from": Account::Alice.address(),
+        "to": Account::Bob.address(),
+        "value": "0x1",
+    });
+    let filled: serde_json::Value =
+        setup.harness.rpc_client()?.request("eth_fillTransaction", (request,)).await?;
+
+    assert_eq!(filled["tx"]["nonce"], "0x3", "three pre-confirmed transactions: {filled}");
+    Ok(())
+}
+
+/// A flashblock whose receipt status contradicts this node's own execution is not served:
+/// `pending` falls back as for any flashblock the node cannot use.
+#[tokio::test]
+async fn test_a_flashblock_whose_receipt_status_contradicts_execution_is_not_served() -> Result<()>
+{
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    let mut flashblock = setup.create_first_payload();
+    flashblock
+        .metadata
+        .receipts
+        .get_mut(&TRANSFER_ETH_HASH)
+        .expect("the transfer's receipt")
+        .success = false;
+
+    setup.send_flashblock(flashblock).await?;
+
+    let block = provider.get_block_by_number(BlockNumberOrTag::Pending).await?.expect("latest");
+    assert_eq!(block.number(), 0, "pending must fall back to the latest block");
+    assert!(provider.get_transaction_receipt(TRANSFER_ETH_HASH).await?.is_none());
+
+    Ok(())
+}
+
+/// An `eth_estimateGas` without a block runs on the pre-confirmed state while a snapshot is served,
+/// and on the latest block otherwise.
+#[tokio::test]
+async fn test_estimate_gas_without_a_block_runs_at_pending_while_a_snapshot_is_served() -> Result<()>
+{
+    let setup = TestSetup::new().await?;
+    let client = setup.harness.rpc_client()?;
+
+    let latest: U256 = client.request("eth_estimateGas", (setup.count1(), "latest")).await?;
+    let before: U256 = client.request("eth_estimateGas", (setup.count1(),)).await?;
+    assert_eq!(before, latest, "without a snapshot a tagless estimate is a latest one");
+
+    setup.send_test_payloads().await?;
+    let pending: U256 = client.request("eth_estimateGas", (setup.count1(), "pending")).await?;
+    let tagless: U256 = client.request("eth_estimateGas", (setup.count1(),)).await?;
+    assert!(pending > latest, "the counter exists only in the flashblock");
+    assert_eq!(tagless, pending);
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_get_transaction_count_pending_adds_flashblock_transactions_to_the_canonical_nonce()
 -> Result<()> {
@@ -1351,7 +1629,10 @@ async fn test_get_transaction_count_pending_adds_flashblock_transactions_to_the_
     assert_eq!(provider.get_transaction_count(alice).await?, 0);
 
     let info = provider.get_account_info(alice).pending().await?;
-    assert_eq!(info.nonce, 3, "eth_getTransactionCount and eth_getAccountInfo must agree");
+    assert_eq!(
+        info.nonce, 3,
+        "eth_getTransactionCount and eth_getAccountInfo agree while the mempool holds nothing further"
+    );
 
     Ok(())
 }
@@ -1504,6 +1785,51 @@ async fn test_get_balance_pending_defers_to_the_engine_pending_block() -> Result
         provider.get_account_info(MAP_ONLY_ADDRESS).pending().await?.balance,
         U256::from(999)
     );
+
+    Ok(())
+}
+
+/// Once a reorg takes the snapshot's anchor off the chain, `eth_getBalance` at `pending` answers
+/// from the latest block, as `eth_getAccountInfo` does, not from the builder's map.
+#[tokio::test]
+async fn test_get_balance_pending_falls_back_once_the_anchor_leaves_the_chain() -> Result<()> {
+    let setup = TestSetup::manual_canonical().await?;
+    let harness = &setup.harness;
+    let provider = harness.provider();
+    let genesis_hash = harness.latest_block().hash();
+
+    // Two blocks at height 1: an empty one, and one that pays the address 999.
+    let empty = harness.submit_block_from_transactions(vec![]).await?;
+    let (transfer_tx, _) = Account::Charlie.sign_txn_request(
+        TransactionRequest::default().to(MAP_ONLY_ADDRESS).value(U256::from(999)).nonce(0),
+    )?;
+    let anchor = harness.submit_block_from_transactions(vec![transfer_tx]).await?;
+    assert_ne!(anchor, empty);
+    harness.engine().update_forkchoice(genesis_hash, anchor, None).await?;
+
+    // A snapshot of block 2 on the paying block, whose map gives the address its own balance.
+    let mut flashblock = setup.create_first_payload();
+    flashblock.base.as_mut().expect("a base payload").block_number = 2;
+    flashblock.metadata.block_number = 2;
+    flashblock.metadata.new_account_balances.insert(MAP_ONLY_ADDRESS, U256::from(MAP_ONLY_BALANCE));
+    setup.send_flashblock(flashblock).await?;
+    assert_eq!(
+        provider.get_balance(MAP_ONLY_ADDRESS).pending().await?,
+        U256::from(MAP_ONLY_BALANCE)
+    );
+
+    // Forkchoice moves to the empty block. The processor does not hear of it, so the snapshot
+    // stays, anchored on a block that is no longer canonical.
+    harness.engine().update_forkchoice(genesis_hash, empty, None).await?;
+    assert!(harness.flashblocks_state().get_pending_blocks().is_some());
+    assert_eq!(provider.get_balance(MAP_ONLY_ADDRESS).await?, U256::ZERO);
+
+    assert_eq!(
+        provider.get_balance(MAP_ONLY_ADDRESS).pending().await?,
+        U256::ZERO,
+        "the latest block's balance, not the map of the replaced chain"
+    );
+    assert_eq!(provider.get_account_info(MAP_ONLY_ADDRESS).pending().await?.balance, U256::ZERO);
 
     Ok(())
 }

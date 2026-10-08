@@ -55,6 +55,7 @@ several notifications for the same block height as it grows.
           "blockHash": null,
           "blockNumber": "0x10f2c5",
           "transactionIndex": "0x0",
+          "blockTimestamp": "0x68cf1a3c",
           "from": "0xd3CdA913deB6f4967b2Ef66ae97DE114a83bcc01",
           "to": "0x742d35Cc6634C0532925a3b8D4C9dD0b4f3BaEa",
           "value": "0x2c68af0bb14000",
@@ -80,3 +81,8 @@ into that block so far. If you want only what is new, subscribe to
 
 **To follow confirmed blocks instead**, use the standard `newHeads` subscription. It does not fire
 per flashblock.
+
+**Limits.** One connection holds at most 4 `newFlashblocks` subscriptions and 32 of the other two
+kinds, a subscription whose client stops reading ends, and a subscriber that falls behind skips
+flashblocks. See
+[`eth_subscribe`](../ethereum-json-rpc-api/eth_subscribe.md#limits).

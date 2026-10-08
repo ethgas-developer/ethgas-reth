@@ -85,3 +85,16 @@ pre-confirmed transaction, exactly as
 
 `newHeads` fires on confirmed blocks only. It does **not** fire per flashblock. To follow the
 pre-confirmed head, use `newFlashblocks`.
+
+## Limits
+
+- One connection holds at most 4 `newFlashblocks` subscriptions, and at most 32 `pendingLogs` and
+  `newFlashblockTransactions` subscriptions together. A further one is refused with `-32006`.
+- A connection keeps the messages its client has not read until it closes. Size
+  `--rpc.max-connections` for that on a public endpoint; see [Run a node](../run-a-node.md#flashblocks-flags).
+- `newFlashblocks` sends a block only once the one before has gone out to the client, and skips
+  the updates in between; each one is the whole block, so the next one sent carries everything.
+- A flashblocks subscription whose client stops reading ends after 10 s, without a message.
+- A subscriber that falls 20 flashblocks behind skips them without notice. `pendingLogs` and
+  `newFlashblockTransactions` then miss those flashblocks' logs and transactions; reconcile with
+  `eth_getBlockByNumber("pending", true)` or with the sealed blocks.

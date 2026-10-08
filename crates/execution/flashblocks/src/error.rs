@@ -67,6 +67,17 @@ pub enum ExecutionError {
         /// The hash of the transaction whose receipt is absent.
         tx_hash: B256,
     },
+    /// The producer's receipt says the transaction succeeded and this node's execution says it
+    /// failed, or the other way round.
+    #[error(
+        "receipt status of tx {tx_hash} contradicts execution: producer success {producer_success}"
+    )]
+    StatusMismatch {
+        /// The hash of the transaction.
+        tx_hash: B256,
+        /// The status the producer's receipt carries.
+        producer_success: bool,
+    },
 
     /// ECDSA signature recovery failed.
     #[error("sender recovery failed: {0}")]

@@ -79,7 +79,11 @@ builder has sequenced your transaction, not that it is in a confirmed block.
 
 **To confirm inclusion**, poll
 [`eth_getTransactionReceipt`](../ethereum-json-rpc-api/eth_getTransactionReceipt.md) until
-`blockHash` is non-zero.
+`blockHash` is non-zero. If another builder's block wins the slot, the transaction is sealed at
+another position, possibly with another status, or not at all, and the receipt changes.
+
+The timeout error has code `4`. Its message names the transaction hash and the duration waited;
+the transaction stays in the mempool and can still land.
 
 ## Errors
 

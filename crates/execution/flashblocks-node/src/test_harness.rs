@@ -49,7 +49,7 @@ use ethgas_reth_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthFeeOverrideServer, EthPubSub, EthPubSubApiServer,
     EthgasApiExt, EthgasApiServer, FlashblocksAPI, FlashblocksReceiver, FlashblocksState,
     PendingBlocksAPI,
-    config::DEFAULT_INCLUSION_FEE_MAX_AGE,
+    config::{DEFAULT_INCLUSION_FEE_CEILING, DEFAULT_INCLUSION_FEE_MAX_AGE},
     payload::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, InclusionFee,
         Metadata,
@@ -193,19 +193,21 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
                 ctx.registry.eth_api().clone(),
                 Arc::clone(&fb),
                 DEFAULT_INCLUSION_FEE_MAX_AGE,
+                DEFAULT_INCLUSION_FEE_CEILING,
             );
             ctx.modules.replace_configured(EthFeeOverrideServer::into_rpc(ethgas_api.clone()))?;
             ctx.modules.merge_configured(EthgasApiServer::into_rpc(ethgas_api))?;
 
             // Register the flashblocks-aware eth_subscribe endpoint (mirrors the production
             // `FlashblocksExtension`); otherwise reth's default eth_subscribe rejects the
-            // flashblocks subscription kinds.
-            let eth_pubsub = EthPubSub::new(
-                ctx.registry.eth_api().clone(),
-                ctx.node().task_executor.clone(),
-                Arc::clone(&fb),
-            );
-            ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
+            // flashblocks subscription kinds. One instance per transport, as in production.
+            let eth_api = ctx.registry.eth_api().clone();
+            let task_executor = ctx.node().task_executor.clone();
+            let eth_pubsub =
+                || EthPubSub::new(eth_api.clone(), task_executor.clone(), Arc::clone(&fb));
+            ctx.modules.replace_http(eth_pubsub().into_rpc())?;
+            ctx.modules.replace_ws(eth_pubsub().into_rpc())?;
+            ctx.modules.replace_ipc(eth_pubsub().into_rpc())?;
 
             let fb_for_task = fb;
             let mut receiver = receiver

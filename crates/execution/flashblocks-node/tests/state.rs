@@ -152,7 +152,9 @@ mod tests {
                 .chain_id(self.provider.chain_spec().chain_id())
                 .to(BASE_TRANSFER_RECIPIENT)
                 .nonce(0)
-                .value(1)
+                // No value: on this chain's rules a value transfer that creates the recipient's
+                // account costs more than 21,000 gas, and the fixture's receipt says it succeeds.
+                .value(0)
                 .gas_limit(21_000)
                 .max_fee_per_gas(2_000_000_000)
                 .into_eip1559()

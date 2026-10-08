@@ -44,15 +44,17 @@ pub struct InclusionPriorityFee {
     pub flashblock_index: Option<u64>,
 }
 
-/// The builder's value, when one is held and it is at most `max_age` old.
+/// The builder's value, when one is held, it is at most `max_age` old, and it is at most
+/// `ceiling`.
 pub fn builder_inclusion_fee(
     latest: Option<&ReceivedInclusionFee>,
     now: Instant,
     max_age: Duration,
+    ceiling: U256,
 ) -> Option<InclusionPriorityFee> {
     let latest = latest?;
     let age = latest.age(now);
-    if age > max_age {
+    if age > max_age || latest.inclusion_fee.priority_fee > ceiling {
         return None;
     }
 
@@ -86,6 +88,12 @@ mod tests {
 
     const GWEI: u64 = 1_000_000_000;
 
+    const MAX_AGE: Duration = Duration::from_secs(15);
+
+    fn ceiling() -> U256 {
+        U256::from(1_000 * GWEI)
+    }
+
     fn inclusion_fee() -> InclusionFee {
         InclusionFee { priority_fee: U256::from(11 * GWEI) }
     }
@@ -104,7 +112,7 @@ mod tests {
         let now = Instant::now();
         let latest = received(Duration::from_secs(2), now);
 
-        let served = builder_inclusion_fee(Some(&latest), now, Duration::from_secs(15)).unwrap();
+        let served = builder_inclusion_fee(Some(&latest), now, MAX_AGE, ceiling()).unwrap();
 
         assert_eq!(served.max_priority_fee_per_gas, U256::from(11 * GWEI));
         assert_eq!(served.source, FeeSource::Builder);
@@ -118,7 +126,7 @@ mod tests {
         let now = Instant::now();
         let latest = received(Duration::from_secs(16), now);
 
-        assert_eq!(builder_inclusion_fee(Some(&latest), now, Duration::from_secs(15)), None);
+        assert_eq!(builder_inclusion_fee(Some(&latest), now, MAX_AGE, ceiling()), None);
     }
 
     #[test]
@@ -126,12 +134,24 @@ mod tests {
         let now = Instant::now();
         let latest = received(Duration::from_secs(15), now);
 
-        assert!(builder_inclusion_fee(Some(&latest), now, Duration::from_secs(15)).is_some());
+        assert!(builder_inclusion_fee(Some(&latest), now, MAX_AGE, ceiling()).is_some());
+    }
+
+    #[test]
+    fn an_inclusion_fee_above_the_ceiling_is_not_served() {
+        let now = Instant::now();
+        let mut latest = received(Duration::from_secs(1), now);
+
+        latest.inclusion_fee.priority_fee = ceiling();
+        assert!(builder_inclusion_fee(Some(&latest), now, MAX_AGE, ceiling()).is_some());
+
+        latest.inclusion_fee.priority_fee = ceiling() + U256::from(1);
+        assert_eq!(builder_inclusion_fee(Some(&latest), now, MAX_AGE, ceiling()), None);
     }
 
     #[test]
     fn nothing_held_means_nothing_served() {
-        assert_eq!(builder_inclusion_fee(None, Instant::now(), Duration::from_secs(15)), None);
+        assert_eq!(builder_inclusion_fee(None, Instant::now(), MAX_AGE, ceiling()), None);
     }
 
     #[test]
@@ -148,7 +168,7 @@ mod tests {
     fn the_response_round_trips_through_json() {
         let now = Instant::now();
         let latest = received(Duration::from_secs(1), now);
-        let served = builder_inclusion_fee(Some(&latest), now, Duration::from_secs(15)).unwrap();
+        let served = builder_inclusion_fee(Some(&latest), now, MAX_AGE, ceiling()).unwrap();
 
         let json = serde_json::to_string(&served).unwrap();
         let decoded: InclusionPriorityFee = serde_json::from_str(&json).unwrap();

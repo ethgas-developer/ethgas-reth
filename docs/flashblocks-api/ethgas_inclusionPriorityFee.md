@@ -82,7 +82,7 @@ The same number reaches three standard methods:
 - `eth_gasPrice` returns the next block's base fee plus `maxPriorityFeePerGas` while the builder's
   value is served, and reth's own gas price otherwise.
 - `eth_fillTransaction` uses it as the priority fee of a request that sets no fee, and twice the
-  base fee plus it as the maximum fee.
+  latest block's base fee plus it as the maximum fee.
 
 Wallets that estimate from `eth_feeHistory`, such as alloy's default estimator, or from their own
 fee service, such as MetaMask, do not see it.

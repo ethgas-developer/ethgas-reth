@@ -67,7 +67,8 @@ builder. `eth_call`, `eth_estimateGas` and the call-tracing methods run on that 
 block environment of the flashblock being built, so they all agree. `eth_simulateV1` runs on that
 state too, but each simulated block takes the environment that follows the latest confirmed block:
 after a block that another builder made, its `COINBASE` and gas limit can differ from the
-flashblock's, and `PREVRANDAO` is 0 unless overridden.
+flashblock's, and `PREVRANDAO` is 0 unless overridden. While the node holds the next block executed
+but not yet canonical, the simulated blocks follow that block instead.
 
 One window remains. A call at `pending` reads the pre-confirmed state twice, once for the block
 environment and once for the account state. When the pending block changes between the two reads,
@@ -159,6 +160,7 @@ block.
 | [`eth_subscribe`](./ethereum-json-rpc-api/eth_subscribe.md) / `eth_unsubscribe` | Manage subscriptions | see below |
 
 What common client libraries do with these answers is on [Client libraries](./client-libraries.md).
+Requests and answers for the flashblocks-aware methods, used together, are on [Examples](./examples/README.md).
 
 #### `eth_sendRawTransactionSync`
 

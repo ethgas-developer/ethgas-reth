@@ -51,6 +51,7 @@ repeated as the block grows.
       "topics": ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
       "data": "0x0000000000000000000000000000000000000000000000000de0b6b3a7640000",
       "blockNumber": "0x10f2c5",
+      "blockTimestamp": "0x68cf1a3c",
       "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
       "transactionHash": "0x7f4e2a8c1b6d9035e4a7c2f8b1d6e9a34c7f0b5d8e2a6c9f3b7d1e4a8c2f6b0c3",
       "transactionIndex": "0x0",
@@ -62,6 +63,8 @@ repeated as the block grows.
 ```
 
 ## Notes
+
+**`blockTimestamp` is the timestamp of the block being built.**
 
 **`blockHash` is `0x000…0` on every pre-confirmed log.** Do not group by it — every pending log
 would collapse into one bucket. Group by `transactionHash` instead.

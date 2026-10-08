@@ -27,5 +27,8 @@ One page each, with parameters, payload shapes and worked examples.
 | [newFlashblockTransactions](./newFlashblockTransactions.md) | Each transaction as it is sequenced |
 | [pendingLogs](./pendingLogs.md) | Logs from pre-confirmed transactions, one per message |
 
+For these methods and subscriptions used together with the standard ones, from reading the
+pre-confirmed block to waiting for the seal, see [Examples](../examples/README.md).
+
 For the standard Ethereum methods and what each does with `pending`, see
 [RPC Overview](../rpc-overview.md).

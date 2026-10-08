@@ -33,7 +33,8 @@ Each entry in `blockStateCalls`:
 ## Returns
 
 An array of simulated blocks. Each carries the usual block fields plus a `calls` array, one entry
-per call, with `status`, `gasUsed`, `returnData`, `logs`, and `error` where the call failed.
+per call, with `status`, `gasUsed`, `maxUsedGas` (the gas used before refunds), `returnData`,
+`logs`, and `error` where the call failed.
 
 `stateRoot` on a simulated block is `0x000…0`. Simulation does not commit to a trie.
 
@@ -86,6 +87,7 @@ per call, with `status`, `gasUsed`, `returnData`, `logs`, and `error` where the 
         {
           "status": "0x1",
           "gasUsed": "0x5a3c",
+          "maxUsedGas": "0x5a3c",
           "returnData": "0x0000000000000000000000000000000000000000000000000000000005f5e100",
           "logs": []
         }
@@ -104,7 +106,9 @@ left, on top of the flashblock's state. After the Amsterdam fork their slot numb
 from the latest confirmed block, one per simulated block, so they differ from the builder's slot
 when a slot was missed. Each simulated block takes the block environment that follows the latest
 confirmed block, not the flashblock's: after a block that another builder made, its `COINBASE` and
-gas limit can differ from the flashblock's, and `PREVRANDAO` is 0 unless overridden.
+gas limit can differ from the flashblock's, and `PREVRANDAO` is 0 unless overridden. While the node
+holds the next block executed for its consensus client but not yet canonical, the simulated blocks
+follow that block instead.
 
 Nothing is submitted and no state is persisted. To submit and wait for pre-confirmation instead,
 use [`eth_sendRawTransactionSync`](./eth_sendRawTransactionSync.md).

@@ -104,6 +104,7 @@ serialized exactly as
       "blockHash": null,
       "blockNumber": "0x10f2c5",
       "transactionIndex": "0x0",
+      "blockTimestamp": "0x68cf1a3c",
       "from": "0xd3CdA913deB6f4967b2Ef66ae97DE114a83bcc01",
       "to": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
       "value": "0x0",

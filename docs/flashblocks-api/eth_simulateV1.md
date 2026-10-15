@@ -36,7 +36,9 @@ An array of simulated blocks. Each carries the usual block fields plus a `calls`
 per call, with `status`, `gasUsed`, `maxUsedGas` (the gas used before refunds), `returnData`,
 `logs`, and `error` where the call failed.
 
-`stateRoot` on a simulated block is `0x000…0`. Simulation does not commit to a trie.
+`stateRoot` on a simulated block is `0x000…0` by default: simulation does not commit to a trie. With
+`--rpc.compute-state-root-for-eth-simulate`, each simulated block carries the state root after its
+calls; at `pending`, that root includes the pre-confirmed state.
 
 ## Example
 

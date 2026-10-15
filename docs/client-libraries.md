@@ -32,7 +32,7 @@ vanish; see [`eth_getTransactionReceipt`](./ethereum-json-rpc-api/eth_getTransac
 |---|---|---|
 | ethers | `tx.wait()` | the pre-confirmed receipt when its first fetch finds one (`confirmations()` is 0), else the sealed receipt. `provider.waitForTransaction(hash)` waits for the seal |
 | viem | `waitForTransactionReceipt` | the pre-confirmed receipt when its first fetch finds one, else the sealed receipt. **With `confirmations` of 2 or more it keeps the first receipt it fetched and returns that one after the seal** |
-| web3.py | `wait_for_transaction_receipt` | the pre-confirmed receipt, about 1 s after the send |
+| web3.py | `wait_for_transaction_receipt` | the pre-confirmed receipt, one flashblock after the send (under 0.5 s at the builder's 200 ms) |
 | alloy | `get_receipt()` | any receipt a poll finds, the pre-confirmed one included; `watch()` waits for the seal |
 | MetaMask | — | never confirms before the seal. A pre-confirmed success leaves the warning "There was a problem loading this transaction." on the transaction; a pre-confirmed failure is final at once |
 

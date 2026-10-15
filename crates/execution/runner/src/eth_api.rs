@@ -38,7 +38,10 @@ use reth_rpc_eth_types::{
 };
 use reth_tasks::pool::{BlockingTaskGuard, BlockingTaskPool};
 
-use crate::pending_state::{PendingOverlay, PendingStateSource};
+use crate::{
+    pending_provider::PendingStateProvider,
+    pending_state::{PendingOverlay, PendingStateSource},
+};
 
 /// The most storage keys one `eth_getProof` request may carry, as in go-ethereum.
 pub const MAX_PROOF_KEYS: usize = 1024;
@@ -132,8 +135,9 @@ where
     ///
     /// An executed engine block at least as new as the snapshot is the better answer: it holds
     /// the transactions that sealed and the withdrawals the bundle omits. And the bundle is only
-    /// coherent on the exact block it was executed against; the overlay resolves that block
-    /// lazily, on its first read, so the check is here, where `None` still falls back.
+    /// coherent on the exact block it was executed against, which must still be on the chain:
+    /// the check is here, where `None` still falls back, because opening that block's state
+    /// fails once it has left the chain.
     fn served_overlay(&self) -> Result<Option<PendingOverlay<N::Primitives>>, EthApiError> {
         let Some(overlay) = self.pending_state.as_ref().and_then(|source| source.pending_overlay())
         else {
@@ -481,14 +485,11 @@ where
             return Ok(None);
         };
 
-        let state = self
-            .provider()
-            .state_with_block_appended(overlay.anchor.hash(), overlay.executed)
-            .map_err(|err| -> Self::Error {
-                <EthApiError as From<ProviderError>>::from(err).into()
-            })?;
+        let anchor = self.provider().state_by_block_hash(overlay.anchor.hash()).map_err(
+            |err| -> Self::Error { <EthApiError as From<ProviderError>>::from(err).into() },
+        )?;
 
-        Ok(Some(state))
+        Ok(Some(Box::new(PendingStateProvider::new(anchor, overlay.bundle))))
     }
 
     /// Returns the block the engine has executed but not yet made canonical, else the canonical

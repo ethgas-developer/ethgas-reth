@@ -75,7 +75,7 @@ rpc eth_getTransactionReceipt "[\"$HASH\"]"
 ```
 
 The `pending` count already included the transfer above, so the second transaction got the next
-nonce. Its receipt came about 1 s after the send, with `blockHash` `0x000…0`: it is pre-confirmed,
+nonce. Its receipt came about 0.2 s after the send, with `blockHash` `0x000…0`: it is pre-confirmed,
 not sealed. **A pre-confirmed receipt can still change or vanish.** If another builder's block wins
 the slot, the transaction is sealed at another position, possibly with another status, or not at
 all. See [`eth_getTransactionReceipt`](../ethereum-json-rpc-api/eth_getTransactionReceipt.md#behaviour-at-pending-on-this-node).

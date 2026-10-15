@@ -74,10 +74,11 @@ wrong.
 
 **To confirm inclusion**, check that `blockHash` is non-zero.
 
-**A pre-confirmed receipt can change, or vanish.** If another builder's block wins the slot (about
-1 to 3 blocks in 100 on the test network), the transaction is sealed in that block at another
-position, with other log indexes and possibly another status, or it is not sealed at all when a
-transaction with the same nonce takes its place. Its receipt then changes, or becomes `null`.
+**A pre-confirmed receipt can change, or vanish.** If another builder's block wins the slot (on the
+test network between about 1 block in 30 and 1 in 800), the transaction is sealed in that block at
+another position, with other log indexes and possibly another status, or it is not sealed at all
+when a transaction with the same nonce takes its place. Its receipt then changes, or becomes
+`null`.
 
 Several clients treat any receipt as final: web3.py's `wait_for_transaction_receipt`, alloy's
 `get_receipt`, and the waits of ethers and viem when their first fetch finds a pre-confirmed

@@ -69,6 +69,11 @@ on this chain.
 | `--flashblocks.fee-max-age <DUR>` | How long the builder's inclusion fee is served after its flashblock arrived, and at most until its block is sealed, by `ethgas_inclusionPriorityFee`, `eth_maxPriorityFeePerGas`, `eth_gasPrice` and `eth_fillTransaction`. Requires `--flashblocks-url` | `15s` |
 | `--flashblocks.fee-ceiling <GWEI>` | The highest builder inclusion fee served, in gwei; a higher one gives way to the node's own suggestion. Requires `--flashblocks-url` | `1000` |
 
+**When the feed drops**, the node tries to connect again, at most 2 s apart, and serves flashblocks
+again from the next block that the producer starts after it is connected. Until then, once the
+block in progress is sealed, `pending` resolves as it does
+[without flashblock data](./rpc-overview.md#what-pending-means-on-this-node).
+
 **On a public endpoint**, size reth's `--rpc.max-connections` (500 by default) for clients that
 open connections and read nothing. The node ends such a client's flashblocks subscriptions after
 10 s, but the messages it has not read stay in the connection until it closes: a few MB for a

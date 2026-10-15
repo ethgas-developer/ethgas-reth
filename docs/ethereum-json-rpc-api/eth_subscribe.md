@@ -94,7 +94,10 @@ pre-confirmed head, use `newFlashblocks`.
   `--rpc.max-connections` for that on a public endpoint; see [Run a node](../run-a-node.md#flashblocks-flags).
 - `newFlashblocks` sends a block only once the one before has gone out to the client, and skips
   the updates in between; each one is the whole block, so the next one sent carries everything.
-- A flashblocks subscription whose client stops reading ends after 10 s, without a message.
-- A subscriber that falls 20 flashblocks behind skips them without notice. `pendingLogs` and
-  `newFlashblockTransactions` then miss those flashblocks' logs and transactions; reconcile with
-  `eth_getBlockByNumber("pending", true)` or with the sealed blocks.
+- A flashblocks subscription whose client stops reading ends after 10 s, without a message. A
+  client that reads more slowly than its subscription sends can lose it the same way, once the
+  messages it has not read fill the connection's network buffers. `eth_unsubscribe` answers
+  `false` for an ended subscription.
+- A subscriber that falls 20 flashblocks behind (4 s at the builder's 200 ms) skips them without
+  notice. `pendingLogs` and `newFlashblockTransactions` then miss those flashblocks' logs and
+  transactions; reconcile with `eth_getBlockByNumber("pending", true)` or with the sealed blocks.

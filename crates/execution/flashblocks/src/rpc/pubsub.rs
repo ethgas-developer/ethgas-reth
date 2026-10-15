@@ -106,7 +106,8 @@ impl SlotKind {
 struct HeldSubscriptions {
     new_flashblocks: usize,
     per_item: usize,
-    /// Every message these subscriptions have queued on the connection, counted once queued.
+    /// Every message these subscriptions have queued on the connection, each counted just before
+    /// it is queued.
     queued_total: Arc<AtomicU64>,
 }
 
@@ -517,8 +518,9 @@ async fn wait_for_room(sink: &SubscriptionSink, limits: SlowSubscriberLimits) ->
     true
 }
 
-/// Serializes and sends one message, and counts it in the connection's `queued_total` once it is
-/// queued. Returns the total with this message counted, or `None` when the subscription must end.
+/// Serializes and sends one message, counted in the connection's `queued_total` before it is
+/// queued, so the buffer never holds a message that the total lacks. Returns the total with this
+/// message counted, or `None` when the subscription must end.
 async fn send<T: Serialize>(
     sink: &SubscriptionSink,
     item: &T,
@@ -536,9 +538,11 @@ async fn send<T: Serialize>(
         }
     };
 
-    // An error means the client disconnected.
+    let total = queued_total.fetch_add(1, Ordering::AcqRel) + 1;
+    // An error means the client disconnected or unsubscribed. The count of the unsent message
+    // stays, which can only make an earlier message look written sooner.
     sink.send(msg).await.ok()?;
-    Some(queued_total.fetch_add(1, Ordering::AcqRel) + 1)
+    Some(total)
 }
 
 /// Whether a message has left the connection's buffer, given how many messages the buffer holds
@@ -617,12 +621,15 @@ async fn pipe_latest<T, U, St, F>(
             },
         };
 
-        // The total is read before the buffer, so a message queued between the two reads can
-        // only make the buffer look fuller. Messages of the connection's other subscriptions are
-        // not counted, which errs the same way.
+        // One flashblock wakes every subscription of the connection, so the per-item ones queue
+        // while this one decides. Each message is counted before it is queued and the buffer is
+        // read first, so a message queued meanwhile can only make the previous one look written.
+        // Messages of reth's own subscriptions on the connection are not counted: they err the
+        // other way.
         let previous_queued = previous_at.is_some_and(|at| {
+            let held = queued(&sink);
             let queued_after = queued_total.load(Ordering::Acquire).saturating_sub(at);
-            !has_left(queued(&sink), queued_after)
+            !has_left(held, queued_after)
         });
         if previous_queued {
             let since = *skipping_since.get_or_insert_with(Instant::now);
@@ -720,6 +727,27 @@ mod tests {
                     tokio::spawn(async move {
                         pipe_latest(sink, stream, |item: &u64| *item, LIMITS, &queued_total).await;
                     });
+                    SubscriptionResult::Ok(())
+                },
+            )
+            .unwrap();
+        module
+    }
+
+    /// A module whose one subscription hands its accepted sink to the test through `sinks`.
+    fn sink_module(
+        sinks: mpsc::Sender<SubscriptionSink>,
+    ) -> RpcModule<Mutex<Option<mpsc::Sender<SubscriptionSink>>>> {
+        let mut module = RpcModule::new(Mutex::new(Some(sinks)));
+        module
+            .register_subscription(
+                "sub",
+                "sub_notification",
+                "unsub",
+                move |_, pending, ctx, _| async move {
+                    let sinks = ctx.lock().unwrap().take().expect("one subscription per module");
+                    let sink = pending.accept().await?;
+                    sinks.send(sink).await.unwrap();
                     SubscriptionResult::Ok(())
                 },
             )
@@ -829,6 +857,70 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let received = read_queued(&mut subscription).await;
         assert_eq!(received.last(), Some(&1), "after the burst of ten: {received:?}");
+    }
+
+    /// A flashblock wakes every subscription of the connection at once, so another
+    /// subscription's messages are queued while the cumulative stream decides. They must not
+    /// make its previous message look unwritten: a client that reads gets every item.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn the_latest_stream_sends_every_item_beside_messages_queued_at_the_same_moment() {
+        const BURST: u64 = 64;
+        let (items, rx) = mpsc::channel(16);
+        let (bursts, bursts_rx) = mpsc::channel(16);
+        let module = shared_module(rx, bursts_rx);
+        let mut subscription = module.subscribe("sub", rpc_params![], 1024).await.unwrap();
+
+        for round in 0..500 {
+            // An item alone: it is the connection's last queued message, read before the next.
+            items.send(2 * round).await.unwrap();
+            let first =
+                tokio::time::timeout(Duration::from_secs(1), subscription.next::<u64>()).await;
+            assert!(matches!(first, Ok(Some(Ok((received, _)))) if received == 2 * round));
+
+            // A burst and the next item together; the client reads once both are queued.
+            let item = 2 * round + 1;
+            bursts.send(BURST).await.unwrap();
+            items.send(item).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(2)).await;
+            let (mut got_item, mut others) = (false, 0);
+            while !got_item || others < BURST {
+                match tokio::time::timeout(Duration::from_secs(1), subscription.next::<u64>()).await
+                {
+                    Ok(Some(Ok((u64::MAX, _)))) => others += 1,
+                    Ok(Some(Ok((received, _)))) => {
+                        assert_eq!(received, item);
+                        got_item = true;
+                    }
+                    _ => panic!("item {item} was skipped; {others} of the burst arrived"),
+                }
+            }
+        }
+    }
+
+    /// Each message is counted before it is queued: one that waits for room in a full buffer is
+    /// in the total already, so the buffer never holds a message that the total lacks.
+    #[tokio::test]
+    async fn a_message_is_counted_before_it_is_queued() {
+        let (sinks, mut accepted) = mpsc::channel(1);
+        let module = sink_module(sinks);
+        let mut subscription = module.subscribe("sub", rpc_params![], 2).await.unwrap();
+        let sink = accepted.recv().await.unwrap();
+        let total = Arc::new(AtomicU64::new(0));
+        for item in 0..2u64 {
+            send(&sink, &item, &total).await.unwrap();
+        }
+        assert_eq!(queued(&sink), 2, "the buffer is full");
+
+        let waiting = tokio::spawn({
+            let (sink, total) = (sink.clone(), Arc::clone(&total));
+            async move { send(&sink, &2u64, &total).await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(total.load(Ordering::Acquire), 3, "the waiting message is counted");
+        assert_eq!(queued(&sink), 2, "and not queued yet");
+
+        assert_eq!(read_queued(&mut subscription).await, vec![0, 1, 2]);
+        assert_eq!(waiting.await.unwrap(), Some(3));
     }
 
     /// Other subscriptions of the connection queue messages after the previous one; once the

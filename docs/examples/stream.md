@@ -67,8 +67,9 @@ The full form adds the receipt fields that flashblock execution knows: `logs`, `
 the block is sealed.
 
 **Limits.** One connection holds at most 4 `newFlashblocks` subscriptions and 32 of the other two
-kinds. A subscription whose client stops reading ends after 10 s, and a subscriber that falls 20
-flashblocks behind skips them. See
+kinds. A subscription whose client stops reading ends after 10 s, without a message; one whose
+client reads more slowly than it sends can end the same way. A subscriber that falls 20
+flashblocks behind (4 s at the builder's 200 ms) skips them. See
 [`eth_subscribe`](../ethereum-json-rpc-api/eth_subscribe.md#limits).
 
 ---

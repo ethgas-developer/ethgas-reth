@@ -72,8 +72,9 @@ impl<Receiver> FlashblocksSubscriber<Receiver>
 where
     Receiver: FlashblocksReceiver + Send + Sync + 'static,
 {
-    /// Max duration of backoff before reconnecting to upstream.
-    pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
+    /// Max duration of backoff before reconnecting to upstream. Short, because the node serves no
+    /// flashblock until it is back on the feed, and a refused try costs nothing.
+    pub const MAX_BACKOFF: Duration = Duration::from_secs(2);
 
     /// Creates a new flashblocks subscriber.
     pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url, ping_interval: Duration) -> Self {
@@ -225,11 +226,15 @@ where
         });
     }
 
-    /// Sleeps for given backoff duration. Returns incremented backoff duration, capped at
-    /// [`Self::MAX_BACKOFF`].
+    /// Sleeps for given backoff duration. Returns the next backoff duration.
     async fn sleep(metrics: &Metrics, backoff: Duration) -> Duration {
         metrics.reconnect_attempts.increment(1);
         tokio::time::sleep(backoff).await;
+        Self::next_backoff(backoff)
+    }
+
+    /// The backoff after `backoff`: doubled, capped at [`Self::MAX_BACKOFF`].
+    fn next_backoff(backoff: Duration) -> Duration {
         std::cmp::min(backoff * 2, Self::MAX_BACKOFF)
     }
 }
@@ -622,5 +627,24 @@ mod tests {
         let (_, diff_only) = parse_flashblock_json(&diff_only.to_string()).unwrap();
         assert!(!diff_only.base_without_slot_number, "a diff-only flashblock has no slot to miss");
         assert!(!diff_only.diff_without_requests);
+    }
+
+    /// Names a receiver type for the subscriber's associated items.
+    struct Discard;
+
+    impl FlashblocksReceiver for Discard {
+        fn on_flashblock_received(&self, _: FlashBlock) {}
+    }
+
+    /// After a failed try the node waits 1 s, then twice as long each time, at most 2 s.
+    #[test]
+    fn the_wait_between_reconnects_doubles_up_to_two_seconds() {
+        let mut backoff = Duration::from_secs(1);
+        let mut waits = vec![backoff.as_secs()];
+        for _ in 0..4 {
+            backoff = FlashblocksSubscriber::<Discard>::next_backoff(backoff);
+            waits.push(backoff.as_secs());
+        }
+        assert_eq!(waits, [1, 2, 2, 2, 2]);
     }
 }

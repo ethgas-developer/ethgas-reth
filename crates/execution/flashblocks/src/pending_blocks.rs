@@ -252,7 +252,7 @@ impl PendingBlocks {
     /// Returns the payload ID for the current build attempt.
     #[inline]
     pub fn payload_id(&self) -> PayloadId {
-        self.flashblocks.first().map(|fb| fb.payload_id).unwrap_or_default()
+        self.flashblocks.last().map(|fb| fb.payload_id).unwrap_or_default()
     }
 
     /// Returns the index of the latest flashblock.

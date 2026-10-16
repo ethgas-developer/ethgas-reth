@@ -527,8 +527,10 @@ where
         let validation_result = FlashblockSequenceValidator::validate(
             pending_blocks.latest_block_number(),
             pending_blocks.latest_flashblock_index(),
+            pending_blocks.payload_id(),
             flashblock.metadata.block_number,
             flashblock.index,
+            flashblock.payload_id,
         );
 
         let first_of_next_block =
@@ -549,6 +551,15 @@ where
                 let mut flashblocks = pending_blocks.get_flashblocks();
                 flashblocks.push(flashblock.clone());
                 self.build_pending_state(prev_pending_blocks, &flashblocks)
+            }
+            SequenceValidationResult::NewPayloadForCurrentBlock => {
+                debug!(
+                    message = "new payload for the current block, rebuilding from its base",
+                    block_number = flashblock.metadata.block_number,
+                    payload_id = %flashblock.payload_id,
+                );
+                // No previous snapshot: its bundle state holds the replaced payload's writes.
+                self.build_pending_state(None, &vec![flashblock.clone()])
             }
             SequenceValidationResult::Duplicate => {
                 // We have received a duplicate flashblock for the current block

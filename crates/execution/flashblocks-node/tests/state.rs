@@ -409,6 +409,7 @@ mod tests {
         harness: TestHarness,
         canonical_block_number: Option<BlockNumber>,
         index: u64,
+        payload_id: PayloadId,
     }
 
     impl FlashblockBuilder {
@@ -422,6 +423,7 @@ mod tests {
                 receipts: HashMap::default(),
                 harness: harness.clone(),
                 index,
+                payload_id: PayloadId::default(),
             }
         }
 
@@ -453,6 +455,11 @@ mod tests {
 
         fn with_canonical_block_number(&mut self, num: BlockNumber) -> &mut Self {
             self.canonical_block_number = Some(num);
+            self
+        }
+
+        const fn with_payload_id(&mut self, payload_id: PayloadId) -> &mut Self {
+            self.payload_id = payload_id;
             self
         }
 
@@ -492,7 +499,7 @@ mod tests {
             });
 
             FlashBlock {
-                payload_id: PayloadId::default(),
+                payload_id: self.payload_id,
                 index: self.index,
                 base,
                 diff: ExecutionPayloadFlashblockDeltaV1 {
@@ -909,6 +916,36 @@ mod tests {
         .await;
 
         assert!(test.flashblocks.get_pending_blocks().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_new_payload_for_the_same_block_replaces_pending_state() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1)
+                .with_transactions(vec![test.build_transaction_to_send_eth(
+                    User::Alice,
+                    User::Bob,
+                    100,
+                )])
+                .build(),
+        )
+        .await;
+        assert_eq!(test.pending_account(User::Alice).expect("the sender is touched").nonce, 1);
+
+        let new_base =
+            FlashblockBuilder::new_base(&test).with_payload_id(PayloadId::new([1; 8])).build();
+        let new_fee_recipient = new_base.base.as_ref().expect("index 0 has a base").fee_recipient;
+        test.send_flashblock(new_base).await;
+
+        let pending = test.flashblocks.get_pending_blocks().get_block(true).expect("block");
+        assert_eq!(pending.header.number, 1);
+        assert_eq!(pending.header.beneficiary, new_fee_recipient);
+        assert_eq!(pending.transactions.len(), 1);
+        assert!(test.pending_account(User::Alice).is_none());
     }
 
     #[tokio::test]

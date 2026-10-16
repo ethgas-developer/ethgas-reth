@@ -4,6 +4,7 @@
 
 use alloy_consensus::Header;
 use alloy_primitives::B256;
+use alloy_rpc_types_engine::PayloadId;
 
 /// Result of validating a flashblock's position in the sequence.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +13,9 @@ pub enum SequenceValidationResult {
     NextInSequence,
     /// First flashblock (index 0) of the next block (block + 1).
     FirstOfNextBlock,
+    /// First flashblock (index 0) of a new payload for the current block. After an empty slot
+    /// the builder builds the same block number again, with a new base.
+    NewPayloadForCurrentBlock,
     /// Duplicate flashblock (same block and index) - should be ignored.
     Duplicate,
     /// Non-sequential index within the same block - indicates missed flashblocks.
@@ -38,19 +42,28 @@ impl FlashblockSequenceValidator {
     /// Validates whether an incoming flashblock follows the expected sequence.
     ///
     /// Returns the appropriate [`SequenceValidationResult`] based on:
+    /// - Same block, index 0, new payload → `NewPayloadForCurrentBlock`
     /// - Same block, index + 1 → `NextInSequence`
     /// - Next block, index 0 → `FirstOfNextBlock`
     /// - Same block and index → `Duplicate`
     /// - Same block, wrong index → `NonSequentialGap`
     /// - Different block, non-zero index or block gap → `InvalidNewBlockIndex`
-    pub const fn validate(
+    pub fn validate(
         latest_block_number: u64,
         latest_flashblock_index: u64,
+        latest_payload_id: PayloadId,
         incoming_block_number: u64,
         incoming_index: u64,
+        incoming_payload_id: PayloadId,
     ) -> SequenceValidationResult {
-        // Next flashblock within the current block
+        // First flashblock of a new payload for the current block
         if incoming_block_number == latest_block_number &&
+            incoming_index == 0 &&
+            incoming_payload_id != latest_payload_id
+        {
+            SequenceValidationResult::NewPayloadForCurrentBlock
+        // Next flashblock within the current block
+        } else if incoming_block_number == latest_block_number &&
             incoming_index == latest_flashblock_index + 1
         {
             SequenceValidationResult::NextInSequence
@@ -318,8 +331,10 @@ mod tests {
         let result = FlashblockSequenceValidator::validate(
             latest_block,
             latest_idx,
+            PayloadId::default(),
             incoming_block,
             incoming_idx,
+            PayloadId::default(),
         );
         assert_eq!(result, expected);
     }

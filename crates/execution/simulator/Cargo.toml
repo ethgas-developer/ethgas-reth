@@ -1,0 +1,63 @@
+[package]
+name = "ethgas-simulator"
+description = "Block simulation extension for the Ethgas node"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# internal
+ethgas-node-runner.workspace = true
+
+# reth
+reth-chainspec.workspace = true
+reth-consensus.workspace = true
+reth-consensus-common.workspace = true
+reth-ethereum-primitives.workspace = true
+reth-evm.workspace = true
+reth-evm-ethereum.workspace = true
+reth-node-api.workspace = true
+reth-node-ethereum.workspace = true
+reth-primitives-traits.workspace = true
+reth-provider.workspace = true
+reth-revm.workspace = true
+reth-rpc-eth-types.workspace = true
+reth-rpc-server-types.workspace = true
+reth-tasks.workspace = true
+reth-transaction-pool.workspace = true
+
+# alloy
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-beacon = { workspace = true, features = ["ssz"] }
+alloy-rpc-types-engine.workspace = true
+alloy-sol-types.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+
+# async
+futures.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+
+# misc
+dashmap.workspace = true
+derive_more = { version = "2", features = ["deref"] }
+metrics.workspace = true
+metrics-derive.workspace = true
+rustc-hash.workspace = true
+serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+ethgas-node-runner = { workspace = true, features = ["test-utils"] }
+alloy-provider.workspace = true
+eyre.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

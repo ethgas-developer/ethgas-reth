@@ -7,6 +7,7 @@ use std::sync::Arc;
 use ethgas_flashblocks_node::{FlashblocksExtension, FlashblocksPendingState};
 use ethgas_node_runner::{EthgasNodeRunner, PendingStateSource};
 use ethgas_reth_flashblocks::FlashblocksConfig;
+use ethgas_simulator::{SimulatorConfig, SimulatorExtension};
 use reth_ethereum_cli::{Cli, chainspec::EthereumChainSpecParser};
 
 type NodeCli = Cli<EthereumChainSpecParser, cli::Args>;
@@ -39,6 +40,9 @@ fn main() {
 
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.set_pending_state(pending_state);
+
+        let simulator_config: Option<SimulatorConfig> = (&args).into();
+        runner.install_ext::<SimulatorExtension>(simulator_config);
 
         runner.run(builder).await
     })

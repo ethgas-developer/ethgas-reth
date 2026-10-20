@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::U256;
 use ethgas_reth_flashblocks::FlashblocksConfig;
+use ethgas_simulator::SimulatorConfig;
 use url::Url;
 
 const WEI_PER_GWEI: u64 = 1_000_000_000;
@@ -58,6 +59,23 @@ pub struct Args {
         requires = "flashblocks_url"
     )]
     pub flashblocks_fee_ceiling: u64,
+
+    /// Starts the block simulator, which serves a relay's block simulation requests from this
+    /// node's state: the `relay_validateBuilderSubmission*` and `relay_inclusionList` methods.
+    ///
+    /// The methods are served on every enabled RPC transport, whatever `--http.api` selects.
+    #[arg(long = "enable-simulator")]
+    pub enable_simulator: bool,
+
+    /// The endpoint the simulator fetches its address disallow list from, at start and every five
+    /// minutes after.
+    #[arg(
+        long = "simulator.blacklist-provider",
+        value_name = "URL",
+        default_value = "http://localhost:3520/blacklist",
+        requires = "enable_simulator"
+    )]
+    pub simulator_blacklist_provider: Url,
 }
 
 fn parse_positive_duration(value: &str) -> Result<Duration, String> {
@@ -78,6 +96,13 @@ impl From<&Args> for Option<FlashblocksConfig> {
                     U256::from(args.flashblocks_fee_ceiling) * U256::from(WEI_PER_GWEI),
                 )
         })
+    }
+}
+
+impl From<&Args> for Option<SimulatorConfig> {
+    fn from(args: &Args) -> Self {
+        args.enable_simulator
+            .then(|| SimulatorConfig::new(args.simulator_blacklist_provider.clone()))
     }
 }
 

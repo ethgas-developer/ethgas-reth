@@ -66,6 +66,13 @@ available via `eth_subscribe`:
   `true` (full tx + logs + gas), a log filter (full tx where any log matches), or
   no param (hashes only)
 
+### Simulator flags
+
+| Flag | Description | Default |
+|---|---|---|
+| `--enable-simulator` | Starts the block simulator, which serves a relay's block simulation requests from this node's state. | _disabled_ |
+| `--simulator.blacklist-provider <URL>` | Endpoint the simulator fetches its address disallow list from, at start and every five minutes after. Requires `--enable-simulator`. | `http://localhost:3520/blacklist` |
+
 ## Tests
 
 ```bash

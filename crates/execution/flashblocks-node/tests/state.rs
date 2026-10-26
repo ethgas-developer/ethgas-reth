@@ -30,7 +30,7 @@ mod tests {
     use reth_revm::{database::StateProviderDatabase, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use reth_trie_common::{
-        ComputedTrieData, HashedPostState, KeccakKeyHasher, updates::TrieUpdates,
+        HashedPostState, KeccakKeyHasher, SortedTrieData, updates::TrieUpdates,
     };
     use std::str::FromStr;
 
@@ -317,7 +317,7 @@ mod tests {
             let executed = ExecutedBlock::new(
                 Arc::new(block.clone()),
                 Arc::new(block_execution_output),
-                ComputedTrieData::new(
+                SortedTrieData::new(
                     Arc::new(hashed_state.into_sorted()),
                     Arc::new(TrieUpdates::default().into_sorted()),
                 ),

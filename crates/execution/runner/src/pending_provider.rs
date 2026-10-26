@@ -7,8 +7,9 @@ use alloy_primitives::{
 };
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
-    AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderResult,
-    StateProofProvider, StateProvider, StateProviderBox, StateRootProvider, StorageRootProvider,
+    AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
+    ProviderResult, StateProofProvider, StateProvider, StateProviderBox, StateRootProvider,
+    StorageRootProvider,
 };
 use reth_revm::db::BundleState;
 use reth_trie_common::{
@@ -202,11 +203,10 @@ impl StateProofProvider for PendingStateProvider {
 
     fn multiproof_v2(
         &self,
-        mut input: TrieInput,
-        targets: MultiProofTargetsV2,
+        _targets: MultiProofTargetsV2,
+        _requires_masks: bool,
     ) -> ProviderResult<DecodedMultiProofV2> {
-        input.prepend(self.hashed_bundle()?);
-        self.anchor.multiproof_v2(input, targets)
+        Err(ProviderError::UnsupportedProvider)
     }
 
     fn witness(
@@ -225,7 +225,7 @@ mod tests {
     use alloy_consensus::BlockHeader;
     use alloy_eips::{eip2935::HISTORY_STORAGE_ADDRESS, eip4788::BEACON_ROOTS_ADDRESS};
     use alloy_network::TransactionBuilder;
-    use alloy_primitives::{address, map::B256Map};
+    use alloy_primitives::address;
     use alloy_rpc_types_eth::TransactionRequest;
     use alloy_sol_types::{SolCall, SolConstructor};
     use reth_provider::{
@@ -236,7 +236,6 @@ mod tests {
         db::{AccountStatus, BundleAccount, states::StorageSlot},
         state::AccountInfo,
     };
-    use reth_trie_common::ProofV2Target;
 
     use super::*;
     use crate::test_utils::{
@@ -352,7 +351,7 @@ mod tests {
     const BENEFICIARY: Address = address!("0x00000000000000000000000000000000000000b1");
 
     /// Block 2's bundle over block 1's state reads as block 2's own state: every account, slot
-    /// and code, and every root and proof, with block 2's state root as the reference.
+    /// and code, and every root and proof it answers, with block 2's state root as the reference.
     #[tokio::test]
     async fn the_bundle_over_its_parent_reads_as_the_block_that_wrote_it() -> eyre::Result<()> {
         // reth's default persistence threshold keeps both blocks in memory, where a live
@@ -503,17 +502,6 @@ mod tests {
         assert_eq!(
             pending.multiproof(TrieInput::default(), targets())?,
             sealed.multiproof(TrieInput::default(), targets())?
-        );
-        let targets_v2 = || MultiProofTargetsV2 {
-            account_targets: vec![ProofV2Target::new(keccak256(counter))],
-            storage_targets: B256Map::from_iter([(
-                keccak256(counter),
-                keys.map(|key| ProofV2Target::new(keccak256(key))).to_vec(),
-            )]),
-        };
-        assert_eq!(
-            pending.multiproof_v2(TrieInput::default(), targets_v2())?,
-            sealed.multiproof_v2(TrieInput::default(), targets_v2())?
         );
         let counter_account = sealed.basic_account(&counter)?;
         let witness = |provider: &dyn StateProvider| -> ProviderResult<Vec<Bytes>> {

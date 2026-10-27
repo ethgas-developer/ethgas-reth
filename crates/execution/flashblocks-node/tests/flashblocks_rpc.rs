@@ -21,7 +21,7 @@ use alloy_provider::{Provider, network::TransactionResponse};
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{
-    EIP1186AccountProofResponse, Filter, TransactionInput, TransactionRequest,
+    Filter, TransactionInput, TransactionRequest,
     error::EthRpcErrorCode,
     state::{AccountOverride, StateOverride},
 };
@@ -977,101 +977,6 @@ async fn test_pending_code_and_storage_come_from_flashblocks() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_get_proof_refuses_pending() -> Result<()> {
-    let setup = TestSetup::new().await?;
-    let provider = setup.harness.provider();
-    setup.send_test_payloads().await?;
-
-    let err = provider
-        .get_proof(setup.txn_details.counter_address, vec![])
-        .pending()
-        .await
-        .expect_err("eth_getProof must refuse the pending tag");
-    assert!(err.to_string().contains("state root"), "the refusal should say why, got: {err}");
-    assert!(
-        err.to_string().contains("-32602"),
-        "the refusal must be an invalid-params error: {err}"
-    );
-
-    let proof = provider.get_proof(setup.txn_details.counter_address, vec![]).await?;
-    assert_eq!(proof.address, setup.txn_details.counter_address);
-
-    Ok(())
-}
-
-/// While the engine holds an executed block at least as new as the snapshot, `pending` is that
-/// block, which has a state root, so a proof at `pending` answers from it.
-/// `eth_getProof` refuses more than 1024 storage keys before any trie work, as go-ethereum and
-/// base do. 1024 keys are served.
-#[tokio::test]
-async fn test_get_proof_caps_the_storage_keys_at_1024() -> Result<()> {
-    let setup = TestSetup::new().await?;
-    let provider = setup.harness.provider();
-    let keys: Vec<B256> =
-        (0..1025u64).map(|slot| B256::from(U256::from(slot).to_be_bytes::<32>())).collect();
-
-    let err = provider
-        .get_proof(Account::Alice.address(), keys.clone())
-        .latest()
-        .await
-        .expect_err("1025 keys must be refused");
-    let message = err.to_string();
-    assert!(message.contains("-32602"), "expected an invalid-params error, got: {message}");
-    assert!(message.contains("too many storage keys: max 1024, got 1025"), "got: {message}");
-
-    let proof =
-        provider.get_proof(Account::Alice.address(), keys[..1024].to_vec()).latest().await?;
-    assert_eq!(proof.storage_proof.len(), 1024);
-
-    Ok(())
-}
-
-/// `eth_getMultiProof` takes the same cap over all its accounts together.
-#[tokio::test]
-async fn test_get_multi_proof_caps_the_storage_keys_at_1024_in_total() -> Result<()> {
-    let setup = TestSetup::new().await?;
-    let client = setup.harness.rpc_client()?;
-    let keys: Vec<B256> =
-        (0..513u64).map(|slot| B256::from(U256::from(slot).to_be_bytes::<32>())).collect();
-    let (alice, bob) = (Account::Alice.address(), Account::Bob.address());
-
-    let targets = vec![(alice, keys[..512].to_vec()), (bob, keys.clone())];
-    let err = client
-        .request::<_, Vec<EIP1186AccountProofResponse>>("eth_getMultiProof", (targets, "latest"))
-        .await
-        .expect_err("1025 keys in total must be refused");
-    let message = err.to_string();
-    assert!(message.contains("-32602"), "expected an invalid-params error, got: {message}");
-    assert!(message.contains("too many storage keys: max 1024, got 1025"), "got: {message}");
-
-    let targets = vec![(alice, keys[..512].to_vec()), (bob, keys[..512].to_vec())];
-    let proofs: Vec<EIP1186AccountProofResponse> =
-        client.request("eth_getMultiProof", (targets, "latest")).await?;
-    assert_eq!(proofs.len(), 2);
-    assert!(proofs.iter().all(|proof| proof.storage_proof.len() == 512));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_get_proof_at_pending_answers_from_the_engine_block() -> Result<()> {
-    let setup = TestSetup::new().await?;
-    let provider = setup.harness.provider();
-    setup.send_test_payloads().await?;
-
-    let (transfer_tx, _) = Account::Charlie.sign_txn_request(
-        TransactionRequest::default().to(PROBE_ADDRESS).value(U256::from(999)).nonce(0),
-    )?;
-    setup.harness.submit_block_from_transactions(vec![transfer_tx]).await?;
-    assert_eq!(provider.get_block_number().await?, 0, "the block must not be canonical");
-
-    let proof = provider.get_proof(PROBE_ADDRESS, vec![]).pending().await?;
-    assert_eq!(proof.balance, U256::from(999), "the proof must describe the engine block");
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn test_pending_balance_miss_path_comes_from_flashblocks() -> Result<()> {
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
@@ -1856,35 +1761,6 @@ async fn test_pending_account_info_and_storage_values_come_from_flashblocks() ->
     let latest: HashMap<Address, Vec<B256>> =
         client.request("eth_getStorageValues", (slots, "latest")).await?;
     assert_eq!(latest[&counter], vec![B256::ZERO, B256::ZERO]);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_get_account_and_get_multi_proof_refuse_pending() -> Result<()> {
-    let setup = TestSetup::new().await?;
-    let provider = setup.harness.provider();
-    let client = setup.harness.rpc_client()?;
-    let alice = Account::Alice.address();
-    setup.send_test_payloads().await?;
-
-    let err = provider.get_account(alice).pending().await.expect_err("eth_getAccount");
-    assert!(err.to_string().contains("-32602"), "not an invalid-params error: {err}");
-    assert!(err.to_string().contains("state root"), "the refusal should say why: {err}");
-
-    let targets = vec![(alice, Vec::<B256>::new())];
-    let err = client
-        .request::<_, serde_json::Value>("eth_getMultiProof", (targets.clone(), "pending"))
-        .await
-        .expect_err("eth_getMultiProof");
-    assert!(err.to_string().contains("-32602"), "not an invalid-params error: {err}");
-    assert!(err.to_string().contains("state root"), "the refusal should say why: {err}");
-
-    // Both answer at `latest`.
-    assert_eq!(provider.get_account(alice).await?.nonce, 0);
-    let proofs: Vec<serde_json::Value> =
-        client.request("eth_getMultiProof", (targets, "latest")).await?;
-    assert_eq!(proofs.len(), 1);
 
     Ok(())
 }

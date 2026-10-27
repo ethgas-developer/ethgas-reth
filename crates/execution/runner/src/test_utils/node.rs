@@ -28,7 +28,7 @@ use reth_tasks::Runtime;
 
 use crate::{
     EthgasNodeExtension, NodeHooks, PendingStateSource, eth_api::EthgasEthApiBuilder,
-    test_utils::engine::EngineApi, types::EthProvider,
+    runner::remove_proof_methods, test_utils::engine::EngineApi, types::EthProvider,
 };
 
 /// Convenience alias for the local blockchain provider type.
@@ -194,6 +194,7 @@ impl LocalNode {
         let NodeHandle { node: node_handle, node_exit_future } = extensions
             .into_iter()
             .fold(NodeHooks::new(), |b, ext| ext.apply(b))
+            .add_rpc_module(remove_proof_methods)
             .apply_to(builder)
             .launch_with_debug_capabilities()
             .await?;

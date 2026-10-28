@@ -3,7 +3,10 @@
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{BlockBody, BlockHeader, Header, Transaction, TxType};
-    use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag, Encodable2718};
+    use alloy_eips::{
+        BlockHashOrNumber, BlockNumberOrTag, Encodable2718, eip7685::EMPTY_REQUESTS_HASH,
+        eip7928::EMPTY_BLOCK_ACCESS_LIST_HASH,
+    };
     use alloy_genesis::Genesis;
     use alloy_primitives::{
         Address, B256, BlockNumber, Bytes, TxKind, U256, address, b256, map::foldhash::HashMap,
@@ -11,7 +14,7 @@ mod tests {
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
     use alloy_sol_types::SolCall;
-    use ethgas_node_runner::test_utils::PendingProbe;
+    use ethgas_node_runner::test_utils::{PendingProbe, slot_number_at};
     use ethgas_reth_flashblocks::{
         FlashblocksAPI, FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
         payload::{
@@ -19,7 +22,7 @@ mod tests {
         },
     };
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
-    use reth_chainspec::{ChainSpec, EthChainSpec};
+    use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
     use reth_db::{DatabaseEnv, test_utils::TempDatabase};
     use reth_network_p2p::sync::NoopSyncStateUpdater;
     use reth_node_api::NodeTypesWithDBAdapter;
@@ -27,7 +30,7 @@ mod tests {
     use reth_revm::{database::StateProviderDatabase, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use reth_trie_common::{
-        ComputedTrieData, HashedPostState, KeccakKeyHasher, updates::TrieUpdates,
+        HashedPostState, KeccakKeyHasher, SortedTrieData, updates::TrieUpdates,
     };
     use std::str::FromStr;
 
@@ -149,7 +152,9 @@ mod tests {
                 .chain_id(self.provider.chain_spec().chain_id())
                 .to(BASE_TRANSFER_RECIPIENT)
                 .nonce(0)
-                .value(1)
+                // No value: on this chain's rules a value transfer that creates the recipient's
+                // account costs more than 21,000 gas, and the fixture's receipt says it succeeds.
+                .value(0)
                 .gas_limit(21_000)
                 .max_fee_per_gas(2_000_000_000)
                 .into_eip1559()
@@ -238,6 +243,9 @@ mod tests {
             mut user_transactions: Vec<TransactionSigned>,
         ) -> RecoveredBlock<EthBlock> {
             let current_tip = self.current_canonical_block();
+            let timestamp = current_tip.header().timestamp() + 2;
+            let chain_spec = self.provider.chain_spec();
+            let amsterdam = chain_spec.is_amsterdam_active_at_timestamp(timestamp);
 
             let mut transactions: Vec<TransactionSigned> = vec![];
             transactions.append(&mut user_transactions);
@@ -251,9 +259,16 @@ mod tests {
                     parent_beacon_block_root: Some(current_tip.hash()),
                     parent_hash: current_tip.hash(),
                     number: current_tip.number() + 1,
-                    timestamp: current_tip.header().timestamp() + 2,
+                    timestamp,
                     gas_limit: current_tip.header().gas_limit(),
                     excess_blob_gas: current_tip.header().excess_blob_gas,
+                    requests_hash: chain_spec
+                        .is_prague_active_at_timestamp(timestamp)
+                        .then_some(EMPTY_REQUESTS_HASH),
+                    // A placeholder: nothing here validates the hash, and an Amsterdam header must
+                    // carry one.
+                    block_access_list_hash: amsterdam.then_some(EMPTY_BLOCK_ACCESS_LIST_HASH),
+                    slot_number: amsterdam.then(|| slot_number_at(timestamp)),
                     ..Header::default()
                 }),
                 BlockBody { transactions, ommers: vec![], withdrawals: None },
@@ -302,7 +317,7 @@ mod tests {
             let executed = ExecutedBlock::new(
                 Arc::new(block.clone()),
                 Arc::new(block_execution_output),
-                ComputedTrieData::new(
+                SortedTrieData::new(
                     Arc::new(hashed_state.into_sorted()),
                     Arc::new(TrieUpdates::default().into_sorted()),
                 ),
@@ -469,6 +484,7 @@ mod tests {
                 transactions.insert(0, base_tx.encoded_2718().into());
             }
 
+            let timestamp = current_block.timestamp + 2;
             let base = (self.index == 0).then(|| ExecutionPayloadBaseV1 {
                 parent_beacon_block_root: current_block.hash(),
                 parent_hash: current_block.hash(),
@@ -476,9 +492,10 @@ mod tests {
                 prev_randao: B256::random(),
                 block_number: canonical_block_num,
                 gas_limit: current_block.gas_limit,
-                timestamp: current_block.timestamp + 2,
+                timestamp,
                 extra_data: Bytes::new(),
                 base_fee_per_gas: U256::from(100),
+                slot_number: Some(slot_number_at(timestamp)),
             });
 
             FlashBlock {
@@ -495,6 +512,7 @@ mod tests {
                     transactions,
                     blob_gas_used: 0,
                     excess_blob_gas: 0,
+                    requests: None,
                 },
                 metadata: Metadata {
                     block_number: canonical_block_num,

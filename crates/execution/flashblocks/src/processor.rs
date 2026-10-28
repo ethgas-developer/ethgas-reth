@@ -39,13 +39,14 @@ use tracing::{debug, error, warn};
 use crate::{
     block_assembler::BlockAssembler,
     cache::FlashblockCache,
-    error::{ProtocolError, ProviderError, StateProcessorError},
+    error::{ExecutionError, ProtocolError, ProviderError, StateProcessorError},
     metrics::Metrics,
     payload::FlashBlock,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
     validation::{
-        CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
-        ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
+        CanonicalBlockOracle, CanonicalBlockReconciler, CanonicalMismatch,
+        FlashblockSequenceValidator, ReconciliationStrategy, ReorgDetectionResult, ReorgDetector,
+        SequenceValidationResult,
     },
 };
 
@@ -283,13 +284,21 @@ where
         }
 
         let started = Instant::now();
-        let result = self.process_flashblock(prev_pending_blocks, &flashblock);
+        let result = self.process_flashblock(prev_pending_blocks.clone(), &flashblock);
         self.metrics.block_processing_duration.record(started.elapsed().as_secs_f64());
 
         match result {
             Ok(new_pending_blocks) => {
                 let new_pending_blocks = self.publishable(new_pending_blocks);
-                if let Some(ref pb) = new_pending_blocks {
+                // A duplicate flashblock leaves the snapshot as it was. Sending it again would
+                // stream its transactions and logs to every subscriber a second time.
+                let unchanged = prev_pending_blocks
+                    .as_ref()
+                    .zip(new_pending_blocks.as_ref())
+                    .is_some_and(|(prev, new)| Arc::ptr_eq(prev, new));
+                if let Some(ref pb) = new_pending_blocks &&
+                    !unchanged
+                {
                     _ = self.sender.send(Arc::clone(pb));
                 }
                 self.record_pending_snapshot(new_pending_blocks.as_deref());
@@ -360,6 +369,8 @@ where
             block.body().transactions().map(|tx| *tx.tx_hash()).collect();
 
         let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
+        // Before the strategy, which discards the verdict once canonical catches up.
+        self.compare_with_canonical(pending_blocks, &flashblocks, block, &reorg_result);
         // Anything short of an exact match must rebuild from canonical.
         let requires_rebuild = reorg_result.requires_rebuild();
 
@@ -454,6 +465,46 @@ where
                 debug!(message = "no pending state to update with canonical block, skipping");
                 Ok(None)
             }
+        }
+    }
+
+    /// Counts and logs every check on which the header pending assembled for `block` fails
+    /// against it. Diagnostics only: pending state is reconciled as before.
+    fn compare_with_canonical(
+        &self,
+        pending_blocks: &PendingBlocks,
+        flashblocks: &[FlashBlock],
+        block: &RecoveredBlock<Block>,
+        reorg_result: &ReorgDetectionResult,
+    ) {
+        let Some(pending_header) = pending_blocks.header_for_block(block.number) else { return };
+        // The block's latest flashblock decides where its requests hash came from.
+        let requests_from_producer = flashblocks
+            .iter()
+            .rev()
+            .find(|flashblock| flashblock.metadata.block_number == block.number)
+            .is_some_and(|flashblock| flashblock.diff.requests.is_some());
+
+        for mismatch in CanonicalBlockOracle::compare(
+            pending_header,
+            block.header(),
+            requests_from_producer,
+            reorg_result,
+        ) {
+            let counter = match mismatch {
+                CanonicalMismatch::WithdrawalsRoot => {
+                    &self.metrics.pending_withdrawals_root_mismatch
+                }
+                CanonicalMismatch::RequestsHash => &self.metrics.pending_requests_hash_mismatch,
+                CanonicalMismatch::SlotNumber => &self.metrics.pending_slot_number_mismatch,
+                CanonicalMismatch::TransactionPrefix => &self.metrics.pending_tx_prefix_violation,
+            };
+            counter.increment(1);
+            warn!(
+                message = "pending block disagrees with the canonical block",
+                block_number = block.number,
+                ?mismatch,
+            );
         }
     }
 
@@ -650,7 +701,8 @@ where
                 parent_beacon_block_root: Some(base.parent_beacon_block_root),
                 withdrawals: None,
                 extra_data: base.extra_data,
-                slot_number: None,
+                // The header's slot, so execution and the pending header agree on it.
+                slot_number: header.slot_number,
             };
 
             // A cache miss falls through to the provider, which only knows canonical blocks, so
@@ -749,8 +801,7 @@ where
                         meta,
                     };
 
-                let blob_params =
-                    self.client.chain_spec().blob_params_at_timestamp(input.meta.timestamp);
+                let blob_params = self.chain_spec.blob_params_at_timestamp(input.meta.timestamp);
                 let eth_receipt =
                     build_receipt(input, blob_params, |receipt, next_log_index, meta| {
                         let mut log_index = next_log_index;
@@ -796,13 +847,31 @@ where
                 }
 
                 if should_execute_transaction {
-                    let ResultAndState { state, .. } = evm
+                    let ResultAndState { result, state } = evm
                         .transact(recovered_transaction)
                         .map_err(|e| crate::error::ExecutionError::TransactionFailed {
                             tx_hash: *transaction.tx_hash(),
                             sender,
                             reason: e.to_string(),
                         })?;
+                    // Pending serves the producer's receipt beside this node's state. When the
+                    // two executions disagree on the outcome, neither story is served.
+                    if result.is_success() != receipt.status() {
+                        self.metrics.transaction_status_mismatch.increment(1);
+                        warn!(
+                            message = "flashblock transaction result differs from the producer's receipt",
+                            block_number = block.number,
+                            tx_hash = %transaction.tx_hash(),
+                            producer_success = receipt.status(),
+                            producer_gas_used = tx_gas_used,
+                            %result,
+                        );
+                        return Err(ExecutionError::StatusMismatch {
+                            tx_hash: *transaction.tx_hash(),
+                            producer_success: receipt.status(),
+                        }
+                        .into());
+                    }
                     pending_blocks_builder
                         .with_transaction_state(*transaction.tx_hash(), state.clone());
                     evm.db_mut().commit(state);
@@ -831,18 +900,19 @@ where
 mod tests {
     use std::sync::atomic::AtomicU64;
 
-    use alloy_consensus::TxLegacy;
-    use alloy_eips::eip2718::Decodable2718;
-    use alloy_primitives::{Bytes, Signature, U256, address, bytes};
-    use reth_chainspec::MAINNET;
-    use reth_ethereum_primitives::Transaction;
-    use reth_provider::test_utils::MockEthProvider;
+    use alloy_consensus::{TxEip1559, TxLegacy, TxType};
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+    use alloy_primitives::{Bytes, Signature, TxKind, U256, address, bytes};
+    use reth_chainspec::{ChainSpecBuilder, MAINNET};
+    use reth_ethereum_primitives::{Receipt, Transaction};
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_testing_utils::generators::{generate_key, rng, sign_tx_with_key_pair};
     use tokio::sync::{broadcast, mpsc};
 
     use super::*;
     use crate::{
         error::ExecutionError,
-        payload::{ExecutionPayloadBaseV1, Metadata},
+        payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata},
     };
 
     /// Alice's transfer from the integration fixtures, with its known sender.
@@ -860,17 +930,90 @@ mod tests {
     }
 
     fn processor() -> StateProcessor<MockEthProvider> {
+        processor_on(MockEthProvider::new(), MAINNET.clone())
+    }
+
+    fn processor_on(
+        client: MockEthProvider,
+        chain_spec: Arc<ChainSpec>,
+    ) -> StateProcessor<MockEthProvider> {
         let (_updates, rx) = mpsc::unbounded_channel();
         let (sender, _) = broadcast::channel(1);
         StateProcessor::new(
-            MockEthProvider::new(),
+            client,
             Arc::new(ArcSwapOption::empty()),
             3,
             Arc::new(Mutex::new(rx)),
-            MAINNET.clone(),
+            chain_spec,
             sender,
             Arc::new(AtomicU64::new(0)),
         )
+    }
+
+    /// `SLOTNUM PUSH0 SSTORE STOP`. As creation code it leaves a code-less account whose storage
+    /// slot 0 holds the slot number the transaction ran in.
+    const STORE_SLOT_NUMBER: Bytes = bytes!("0x4b5f5500");
+
+    #[test]
+    fn flashblock_transactions_run_in_the_slot_the_producer_sent() {
+        let spec = Arc::new(ChainSpecBuilder::mainnet().amsterdam_activated().build());
+        let parent =
+            Header { gas_limit: 30_000_000, base_fee_per_gas: Some(1), ..Default::default() };
+        let client = MockEthProvider::new().with_chain_spec(spec.as_ref().clone());
+        client.add_header(parent.hash_slow(), parent.clone());
+
+        let creation = sign_tx_with_key_pair(
+            generate_key(&mut rng()),
+            Transaction::Eip1559(TxEip1559 {
+                chain_id: 1,
+                gas_limit: 1_000_000,
+                max_fee_per_gas: 10,
+                to: TxKind::Create,
+                input: STORE_SLOT_NUMBER,
+                ..Default::default()
+            }),
+        );
+        let sender = creation.recover_signer().unwrap();
+        client.add_account(sender, ExtendedAccount::new(0, U256::from(10u128.pow(18))));
+
+        let mut receipts = HashMap::default();
+        receipts.insert(
+            *creation.tx_hash(),
+            Receipt {
+                tx_type: TxType::Eip1559,
+                success: true,
+                cumulative_gas_used: 1,
+                logs: vec![],
+            },
+        );
+        let flashblock = FlashBlock {
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_hash: parent.hash_slow(),
+                block_number: 1,
+                gas_limit: 30_000_000,
+                timestamp: 12,
+                base_fee_per_gas: U256::from(1),
+                slot_number: Some(4242),
+                ..Default::default()
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                transactions: vec![creation.encoded_2718().into()],
+                ..Default::default()
+            },
+            metadata: Metadata { block_number: 1, receipts, ..Default::default() },
+            ..Default::default()
+        };
+
+        let pending = processor_on(client, spec)
+            .build_pending_state(None, &vec![flashblock])
+            .unwrap()
+            .expect("a snapshot");
+
+        let stored = pending
+            .bundle_state()
+            .account(&sender.create(0))
+            .and_then(|account| account.storage_slot(U256::ZERO));
+        assert_eq!(stored, Some(U256::from(4242)));
     }
 
     #[test]

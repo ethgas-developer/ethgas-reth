@@ -17,7 +17,6 @@ use ethgas_node_runner::{
     test_utils::{Account, DoubleCounter, TestHarnessBuilder},
 };
 use eyre::Result;
-use reth_revm::db::BundleState;
 
 /// A contract deployed only in the pool must not exist at `pending`.
 ///
@@ -98,6 +97,6 @@ impl PendingStateSource for OffChainAnchor {
         let anchor =
             Header { parent_hash: B256::repeat_byte(0xab), ..Default::default() }.seal_slow();
         let latest = Header { number: 1, ..Default::default() }.seal_slow();
-        Some(PendingOverlay::from_bundle(anchor, latest, BundleState::default()))
+        Some(PendingOverlay::from_bundle(anchor, latest, Arc::default()))
     }
 }

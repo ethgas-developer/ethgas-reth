@@ -4,7 +4,7 @@ Returns a block by number or tag.
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Yes** — `pending` reflects the flashblock being built |
+| At `pending` | **Pre-confirmed** |
 
 ## Parameters
 
@@ -15,7 +15,7 @@ Returns a block by number or tag.
 
 ## Returns
 
-`object | null` — a block object, or `null` if no such block exists.
+`object | null`: a block object, or `null` if no such block exists.
 
 ## Example
 
@@ -43,8 +43,8 @@ Returns a block by number or tag.
     "timestamp": "0x68cf1a3c",
     "gasLimit": "0x1c9c380",
     "gasUsed": "0x5208",
-    "baseFeePerGas": "0x3b9aca00",
-    "transactions": ["0x7f4e2a8c1b6d9035e4a7c2f8b1d6e9a34c7f0b5d8e2a6c9f3b7d1e4a8c2f6b0c3"],
+    "baseFeePerGas": "0x4c4b40",
+    "transactions": ["0x7f4e2a8c1b6d9035e4a7c2f8b1d6e9a34c7f0b5d8e2a6c9f3b7d1e4a8c2f6b0c"],
     "uncles": []
   }
 }
@@ -57,5 +57,9 @@ Returns a block by number or tag.
 **Its `hash` is `0x000…0`.** The node does not compute a hash for an unsealed block, and does not
 publish the producer's. Do not key on it, and do not pass it to `eth_getBlockByHash`.
 
+**After the Amsterdam fork, it carries `slotNumber` and no `blockAccessListHash`.** `slotNumber` is
+the slot the builder is building the block for. The node builds no block access list for an
+unsealed block, so that field is absent rather than a placeholder.
+
 If no flashblock data is available, `pending` returns the next block when the node has already
-executed it for its consensus client, else the latest confirmed block. It never returns `null`.
+executed it for its consensus client, else the latest block. It never returns `null`.

@@ -4,7 +4,7 @@ Executes a message call immediately, without broadcasting a transaction. Nothing
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Yes** — `pending` reflects the flashblock being built |
+| At `pending` | **Pre-confirmed** |
 
 ## Parameters
 
@@ -17,7 +17,7 @@ Executes a message call immediately, without broadcasting a transaction. Nothing
 
 ## Returns
 
-`string` — the return value of the call, hex-encoded.
+`string`: the return value of the call, hex-encoded.
 
 ## Example
 
@@ -29,7 +29,7 @@ Executes a message call immediately, without broadcasting a transaction. Nothing
   "method": "eth_call",
   "params": [
     {
-      "to": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "to": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
       "data": "0x70a082310000000000000000000000004200000000000000000000000000000000000006"
     },
     "pending"
@@ -50,21 +50,28 @@ Executes a message call immediately, without broadcasting a transaction. Nothing
 
 ## Behaviour at `pending` on this node
 
-`pending` executes against the flashblock being built, so the call sees state left by
-pre-confirmed transactions the builder has already sequenced.
+`pending` executes against the pre-confirmed block, so the call sees state left by pre-confirmed
+transactions the builder has already sequenced.
 
-The block environment is the flashblock's own: `block.number`, `block.timestamp` and the base fee
-are those of the block being built. A state override applies on top of the flashblock's state, so
-overriding one field of an account keeps the account's other fields as the flashblock left them.
+The block environment is the pre-confirmed block's own: `block.number`, `block.timestamp`, the base
+fee, `COINBASE`, `PREVRANDAO` and the gas limit are those of the block being built, and after the
+Amsterdam fork so is the slot number that `SLOTNUM` reads. At any block tag, a call whose gas price
+works out to 0 (no fee field, a `gasPrice` of 0, or a `maxFeePerGas` of 0) runs with a base fee of
+0, so `BASEFEE` reads 0; set `gasPrice`, `maxFeePerGas` or `maxPriorityFeePerGas` to read the
+block's base fee. A state override applies on top of the pre-confirmed state, so overriding one
+field of an account keeps the account's other fields as the pre-confirmed block left them.
 
-Without flashblock data, `pending` is reth's own: the latest confirmed block's state in the
-environment of the block that would follow it.
+When the node imports a block, `pending` is that block if the node has no flashblock data or the
+block is at least as new as the pre-confirmed block. When the node has no flashblock data and
+imports no block, `pending` is the latest block's state in the environment of the block that would
+follow it.
 
-This node supports two extra parameters that the standard JSON-RPC shape does not require:
-`stateOverrides` and `blockOverrides`. Both are honoured at `pending`.
+The environment and the state are read one after the other; see
+[At a block boundary](../rpc-overview.md#at-a-block-boundary). Both overrides are honoured at
+`pending`.
 
 ## Errors
 
 | Code | Message |
 |---|---|
-| `-32000` | `execution reverted` — the revert reason, where one exists, is in the error `data` |
+| `3` | `execution reverted`; the revert data, where one exists, is in the error `data` |

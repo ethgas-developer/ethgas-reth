@@ -17,11 +17,13 @@ use jsonrpsee::{
 };
 use jsonrpsee_types::ErrorObjectOwned;
 use reth_primitives_traits::NodePrimitives;
-use reth_provider::{CanonStateNotifications, CanonStateSubscriptions, StateProvider};
+use reth_provider::{
+    BlockIdReader, BlockNumReader, CanonStateNotifications, CanonStateSubscriptions,
+};
 use reth_rpc::EthFilter;
 use reth_rpc_eth_api::{
-    EthApiTypes, EthFilterApiServer, FromEthApiError, RpcBlock, RpcReceipt, RpcTransaction,
-    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi, LoadState},
+    EthApiTypes, EthFilterApiServer, RpcBlock, RpcNodeCore, RpcReceipt, RpcTransaction,
+    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use reth_rpc_eth_types::EthApiError;
 use tokio::{
@@ -159,6 +161,31 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
     }
 }
 
+impl<Eth, FB> EthApiExt<Eth, FB>
+where
+    Eth: EthApiTypes + RpcNodeCore,
+    FB: FlashblocksAPI,
+{
+    /// The builder's balance for `address` in the snapshot, while `pending` is the snapshot. It is
+    /// not when the engine holds an executed block at least as new, which the builder's map does
+    /// not describe (it can hold the builder's payout, or be another builder's block), nor when the
+    /// snapshot's anchor is not canonical: the other state methods then read the latest block.
+    fn builder_balance(&self, address: Address) -> Option<U256> {
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        let snapshot = pending_blocks.as_ref()?;
+        if let Ok(Some(engine_pending)) = self.eth_api.provider().pending_block_num_hash() &&
+            engine_pending.number >= snapshot.latest_block_number()
+        {
+            return None;
+        }
+        let anchor = snapshot.anchor()?;
+        if !matches!(self.eth_api.provider().block_number(anchor.hash()), Ok(Some(_))) {
+            return None;
+        }
+        snapshot.get_balance(address)
+    }
+}
+
 #[async_trait]
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
@@ -228,8 +255,7 @@ where
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.rpc_get_balance.increment(1);
-            let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            if let Some(balance) = pending_blocks.get_balance(address) {
+            if let Some(balance) = self.builder_balance(address) {
                 return Ok(balance);
             }
         }
@@ -247,21 +273,12 @@ where
             address = %address,
         );
 
-        let block_id = block_number.unwrap_or_default();
-        if block_id.is_pending() {
+        // reth's count reads `pending` from the overlay, so it is the executed nonce, which
+        // counts EIP-7702 authorizations and contract creations as well as sent transactions. It
+        // then steps past this node's pool transactions that follow that nonce, so two sends
+        // before the first is pre-confirmed get two nonces.
+        if block_number.unwrap_or_default().is_pending() {
             self.metrics.rpc_get_transaction_count.increment(1);
-            // The executed nonce, which counts EIP-7702 authorizations and contract creations as
-            // well as sent transactions. reth's own `pending` would add this node's pool.
-            return LoadState::spawn_blocking_io_with_state(
-                &self.eth_api,
-                block_id,
-                move |_, state| {
-                    let nonce = state.account_nonce(&address).map_err(Eth::Error::from_eth_err)?;
-                    Ok(U256::from(nonce.unwrap_or_default()))
-                },
-            )
-            .await
-            .map_err(Into::into);
         }
 
         EthState::transaction_count(&self.eth_api, address, block_number).await.map_err(Into::into)
@@ -402,7 +419,13 @@ where
             block_overrides = ?block_overrides,
         );
 
-        let block_id = block_number.unwrap_or_default();
+        // Without a block, the estimate runs on the pre-confirmed state while flashblock data is
+        // served: a transaction sent now executes after the pre-confirmed ones.
+        let block_id = match block_number {
+            Some(block_id) => block_id,
+            None if self.flashblocks_state.get_pending_blocks().is_some() => BlockId::pending(),
+            None => BlockId::default(),
+        };
         if block_id.is_pending() {
             self.metrics.rpc_estimate_gas.increment(1);
         }

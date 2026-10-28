@@ -2,7 +2,7 @@
 //! node.
 
 use eyre::Result;
-use reth_node_builder::{EngineNodeLauncher, Node, NodeHandle, TreeConfig};
+use reth_node_builder::{Node, NodeHandle};
 use reth_node_ethereum::{
     EthereumNode,
     node::{EthereumAddOns, EthereumEngineValidatorBuilder},
@@ -17,11 +17,13 @@ use reth_node_builder::rpc::{
 use std::sync::Arc;
 
 use crate::{
-    EthgasNodeExtension, FromExtensionConfig, NodeHooks, PendingStateSource,
+    EthgasNodeExtension, EthgasRpcContext, FromExtensionConfig, NodeHooks, PendingStateSource,
     builder::EthNodeAdapter,
     eth_api::EthgasEthApiBuilder,
     types::{EthAddOns, EthgasNodeBuilder},
 };
+
+const PROOF_METHODS: [&str; 3] = ["eth_getProof", "eth_getMultiProof", "eth_getAccount"];
 
 /// Wraps the Ethgas node configuration and orchestrates builder wiring.
 #[derive(Debug)]
@@ -86,26 +88,15 @@ impl EthgasNodeRunner {
         extensions
             .into_iter()
             .fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks))
+            .add_rpc_module(remove_proof_methods)
             .add_node_started_hook(|_| {
                 ethgas_cli_utils::register_version_metrics!();
                 Ok(())
             })
             .apply_to(builder)
-            .launch_with_fn(|builder| {
-                let engine_tree_config = TreeConfig::default()
-                    .with_persistence_threshold(builder.config().engine.persistence_threshold)
-                    .with_memory_block_buffer_target(
-                        builder.config().engine.memory_block_buffer_target(),
-                    );
-
-                let launcher = EngineNodeLauncher::new(
-                    builder.task_executor().clone(),
-                    builder.config().datadir(),
-                    engine_tree_config,
-                );
-
-                builder.launch_with(launcher)
-            })
+            // As `reth node` launches: every `--engine.*` flag reaches the engine tree, and
+            // `--dev` mines blocks without a consensus client.
+            .launch_with_debug_capabilities()
             .await
     }
 }
@@ -113,5 +104,101 @@ impl EthgasNodeRunner {
 impl Default for EthgasNodeRunner {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Removes [`PROOF_METHODS`] from every transport and from the engine API.
+pub(crate) fn remove_proof_methods(ctx: &mut EthgasRpcContext<'_>) -> Result<()> {
+    for method in PROOF_METHODS {
+        ctx.modules.remove_method_from_configured(method);
+    }
+    ctx.auth_module.remove_auth_methods(PROOF_METHODS);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        time::{Duration, Instant},
+    };
+
+    use jsonrpsee::{
+        core::{ClientError, JsonValue, client::ClientT},
+        rpc_params,
+        types::error::METHOD_NOT_FOUND_CODE,
+    };
+    use reth_chainspec::ChainSpec;
+    use reth_db::{ClientVersion, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path};
+    use reth_node_builder::{NodeBuilder, NodeConfig};
+    use reth_node_core::args::DatadirArgs;
+    use reth_provider::{BlockNumReader, HeaderProvider};
+    use reth_tasks::Runtime;
+
+    use super::*;
+    use crate::test_utils::{build_test_genesis, build_test_genesis_with_amsterdam_at};
+
+    #[tokio::test]
+    async fn dev_mode_mines_amsterdam_blocks_without_a_consensus_client() -> Result<()> {
+        let chain_spec = Arc::new(ChainSpec::from(build_test_genesis_with_amsterdam_at(Some(0))));
+        let datadir = tempdir_path();
+        let mut config =
+            NodeConfig::new(chain_spec).dev().with_unused_ports().with_datadir_args(DatadirArgs {
+                datadir: datadir.clone().into(),
+                ..Default::default()
+            });
+        config.dev.block_time = Some(Duration::from_millis(100));
+        let db = init_db(&datadir, DatabaseArguments::new(ClientVersion::default()))?;
+        let builder =
+            NodeBuilder::new(config).with_database(db).with_launch_context(Runtime::test());
+
+        let NodeHandle { node, .. } = EthgasNodeRunner::launch_node(vec![], None, builder).await?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while node.provider.best_block_number()? < 2 {
+            assert!(Instant::now() < deadline, "no block was mined");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        // reth's dev miner gives every Amsterdam block slot 0.
+        let header = node.provider.header_by_number(1)?.expect("block 1 was mined");
+        assert_eq!(header.slot_number, Some(0));
+        assert!(header.block_access_list_hash.is_some());
+        let _ = fs::remove_dir_all(datadir);
+        Ok(())
+    }
+
+    /// `eth_getProof`, `eth_getMultiProof` and `eth_getAccount` answer `Method not found`, and so
+    /// do the two proof methods on the engine API.
+    #[tokio::test]
+    async fn proof_methods_are_not_served() -> Result<()> {
+        let chain_spec = Arc::new(ChainSpec::from(build_test_genesis()));
+        let datadir = tempdir_path();
+        let mut config =
+            NodeConfig::new(chain_spec).with_unused_ports().with_datadir_args(DatadirArgs {
+                datadir: datadir.clone().into(),
+                ..Default::default()
+            });
+        config.rpc.http = true;
+        config.network.discovery.disable_discovery = true;
+        let db = init_db(&datadir, DatabaseArguments::new(ClientVersion::default()))?;
+        let builder =
+            NodeBuilder::new(config).with_database(db).with_launch_context(Runtime::test());
+
+        let NodeHandle { node, .. } = EthgasNodeRunner::launch_node(vec![], None, builder).await?;
+        let rpc = node.rpc_server_handle().http_client().expect("HTTP is enabled");
+        for method in ["eth_getProof", "eth_getMultiProof", "eth_getAccount"] {
+            assert!(method_not_found(&rpc, method).await, "{method} is served");
+        }
+        let engine = node.auth_server_handle().http_client();
+        for method in ["eth_getProof", "eth_getMultiProof"] {
+            assert!(method_not_found(&engine, method).await, "the engine API serves {method}");
+        }
+        let _ = fs::remove_dir_all(datadir);
+        Ok(())
+    }
+
+    async fn method_not_found(client: &impl ClientT, method: &str) -> bool {
+        let response = client.request::<JsonValue, _>(method, rpc_params![]).await;
+        matches!(response, Err(ClientError::Call(err)) if err.code() == METHOD_NOT_FOUND_CODE)
     }
 }

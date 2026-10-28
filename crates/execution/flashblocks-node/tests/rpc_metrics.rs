@@ -15,7 +15,7 @@ use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, TransactionRequest};
 use ethgas_flashblocks_node::test_harness::FlashblocksHarness;
-use ethgas_node_runner::test_utils::Account;
+use ethgas_node_runner::test_utils::{Account, slot_number_at};
 use ethgas_reth_flashblocks::payload::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, InclusionFee, Metadata,
 };
@@ -29,10 +29,10 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungsten
 
 /// Alice sends 50 ETH to `TRANSFER_ETH_RECIPIENT` at nonce 0.
 const TRANSFER_ETH_TX: Bytes = bytes!(
-    "0x02f86b0180806482520894deadbeefdeadbeefdeadbeefdeadbeefdeadbeef8902b5e3af16b188000080c001a0c18767bf03c514933cfec05f2c9a354bf4e8eaafe2e4e7c86836bfc0fb62ad42a02b291b32c588337b7b45420076433157a440bb97afebb154988986527a6ef535"
+    "0x02f86c01808064830493e094deadbeefdeadbeefdeadbeefdeadbeefdeadbeef8902b5e3af16b188000080c001a0d5e1ce1a7fadd65c1f2855de3bfe02b2dfb527909af7ec37bc5591d02c36221aa027f9f196c2a6187b87d91b31be7e3741ecdfb7ceeaea5973a3a307d6dc3e4b6b"
 );
 const TRANSFER_ETH_HASH: TxHash =
-    b256!("0x706bbbf402a4f55831d250c77be8f368e16d9b63df9d58561cea8d1f2b59030b");
+    b256!("0x877981e00f2ea9f76eab4de90737c1300dfad4f2f9b3bfc12cfa0728834f4140");
 const TRANSFER_ETH_RECIPIENT: Address = address!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
 
 /// The value of the counter whose name ends with `suffix`, read from reth's Prometheus recorder.
@@ -75,6 +75,7 @@ fn base_payload(inclusion_fee: Option<InclusionFee>) -> FlashBlock {
             timestamp: 0,
             extra_data: Bytes::new(),
             base_fee_per_gas: U256::ZERO,
+            slot_number: Some(slot_number_at(0)),
         }),
         diff: ExecutionPayloadFlashblockDeltaV1 {
             transactions: vec![TRANSFER_ETH_TX],
@@ -335,6 +336,7 @@ async fn every_flashblocks_path_increments_its_counter() -> Result<()> {
         (1, json!(["newFlashblocks"]), "subscriptions_new_flashblocks"),
         (2, json!(["pendingLogs", {}]), "subscriptions_pending_logs"),
         (3, json!(["newFlashblockTransactions"]), "subscriptions_new_flashblock_transactions"),
+        (4, json!(["newFlashblockBatches"]), "subscriptions_new_flashblock_batches"),
     ] {
         assert_eq!(
             growth(counter, async {

@@ -51,9 +51,10 @@ RUST_LOG=info,ethgas_reth_flashblocks=debug \
 | Flag | Description | Default |
 |---|---|---|
 | `--flashblocks-url <URL>` | WebSocket endpoint streaming flashblock updates (alias `--websocket-url`). Enables flashblocks when set. | _disabled_ |
-| `--max-pending-blocks-depth <N>` | Max pending blocks to retain in memory. | `3` |
+| `--max-pending-blocks-depth <N>` | How many blocks the canonical tip can move past the first block of the pending state before the node drops that state. | `3` |
 | `--flashblocks.ping-interval <DURATION>` | Interval between upstream websocket ping frames, and also the pong deadline: a reconnect is triggered once a ping goes unanswered for one interval, so a dead upstream is detected after at most two. Accepts humantime durations (`500ms`, `5s`, `1m`). Requires `--flashblocks-url`. | `2s` |
-| `--flashblocks.fee-max-age <DURATION>` | How long the builder's inclusion fee is served after its flashblock arrived, by `ethgas_inclusionPriorityFee`, `eth_maxPriorityFeePerGas` and `eth_gasPrice`. Requires `--flashblocks-url`. | `15s` |
+| `--flashblocks.fee-max-age <DURATION>` | How long the builder's inclusion fee is served after its flashblock arrived, and at most until its block is sealed, by `ethgas_inclusionPriorityFee`, `eth_maxPriorityFeePerGas`, `eth_gasPrice` and `eth_fillTransaction`. Requires `--flashblocks-url`. | `15s` |
+| `--flashblocks.fee-ceiling <GWEI>` | The highest builder inclusion fee served, in gwei; a higher one gives way to the node's own suggestion. Requires `--flashblocks-url`. | `1000` |
 
 When `--flashblocks-url` is set, requests with the `pending` block tag are
 served from flashblock-derived state, and the following extra subscriptions are
@@ -63,7 +64,16 @@ available via `eth_subscribe`:
 - `pendingLogs` — logs from the latest flashblock matching a filter
 - `newFlashblockTransactions` — transactions from the latest flashblock; accepts
   `true` (full tx + logs + gas), a log filter (full tx where any log matches), or
-  no param (hashes only)
+  no param or `false` (hashes only)
+- `newFlashblockBatches` — one notification per flashblock with all the
+  transactions it added, even when none match; accepts an optional log filter
+
+### Simulator flags
+
+| Flag | Description | Default |
+|---|---|---|
+| `--enable-simulator` | Starts the block simulator, which serves a relay's block simulation requests from this node's state. | _disabled_ |
+| `--simulator.blacklist-provider <URL>` | Endpoint the simulator fetches its address disallow list from, at start and every five minutes after. Requires `--enable-simulator`. | `http://localhost:3520/blacklist` |
 
 ## Tests
 

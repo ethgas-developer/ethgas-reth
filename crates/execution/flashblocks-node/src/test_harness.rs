@@ -24,7 +24,7 @@ use ethgas_node_runner::{
     EthgasNodeExtension, NodeHooks, PendingStateSource,
     test_utils::{
         Account, LocalNode, LocalNodeOptions, LocalNodeProvider, NODE_STARTUP_DELAY_MS,
-        TestHarness, build_test_genesis, init_silenced_tracing,
+        TestHarness, build_test_genesis, init_silenced_tracing, slot_number_at,
     },
 };
 use eyre::Result;
@@ -49,7 +49,7 @@ use ethgas_reth_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthFeeOverrideServer, EthPubSub, EthPubSubApiServer,
     EthgasApiExt, EthgasApiServer, FlashblocksAPI, FlashblocksReceiver, FlashblocksState,
     PendingBlocksAPI,
-    config::DEFAULT_INCLUSION_FEE_MAX_AGE,
+    config::{DEFAULT_INCLUSION_FEE_CEILING, DEFAULT_INCLUSION_FEE_MAX_AGE},
     payload::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, InclusionFee,
         Metadata,
@@ -193,19 +193,21 @@ impl EthgasNodeExtension for FlashblocksTestExtension {
                 ctx.registry.eth_api().clone(),
                 Arc::clone(&fb),
                 DEFAULT_INCLUSION_FEE_MAX_AGE,
+                DEFAULT_INCLUSION_FEE_CEILING,
             );
             ctx.modules.replace_configured(EthFeeOverrideServer::into_rpc(ethgas_api.clone()))?;
             ctx.modules.merge_configured(EthgasApiServer::into_rpc(ethgas_api))?;
 
             // Register the flashblocks-aware eth_subscribe endpoint (mirrors the production
             // `FlashblocksExtension`); otherwise reth's default eth_subscribe rejects the
-            // flashblocks subscription kinds.
-            let eth_pubsub = EthPubSub::new(
-                ctx.registry.eth_api().clone(),
-                ctx.node().task_executor.clone(),
-                Arc::clone(&fb),
-            );
-            ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
+            // flashblocks subscription kinds. One instance per transport, as in production.
+            let eth_api = ctx.registry.eth_api().clone();
+            let task_executor = ctx.node().task_executor.clone();
+            let eth_pubsub =
+                || EthPubSub::new(eth_api.clone(), task_executor.clone(), Arc::clone(&fb));
+            ctx.modules.replace_http(eth_pubsub().into_rpc())?;
+            ctx.modules.replace_ws(eth_pubsub().into_rpc())?;
+            ctx.modules.replace_ipc(eth_pubsub().into_rpc())?;
 
             let fb_for_task = fb;
             let mut receiver = receiver
@@ -274,6 +276,12 @@ impl FlashblocksHarness {
         Self::with_options(true, options).await
     }
 
+    /// Launch the harness with automatic canonical processing on another chain than the default
+    /// test genesis, for example one from `build_test_genesis_with_amsterdam_at`.
+    pub async fn with_chain_spec(chain_spec: Arc<ChainSpec>) -> Result<Self> {
+        Self::launch(true, LocalNodeOptions::default(), chain_spec).await
+    }
+
     /// Get a handle to the in-memory Flashblocks state backing the harness.
     pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
@@ -285,11 +293,16 @@ impl FlashblocksHarness {
     }
 
     async fn with_options(process_canonical: bool, options: LocalNodeOptions) -> Result<Self> {
-        init_silenced_tracing();
+        Self::launch(process_canonical, options, Arc::new(ChainSpec::from(build_test_genesis())))
+            .await
+    }
 
-        // Build default chain spec programmatically
-        let genesis = build_test_genesis();
-        let chain_spec = Arc::new(ChainSpec::from(genesis));
+    async fn launch(
+        process_canonical: bool,
+        options: LocalNodeOptions,
+        chain_spec: Arc<ChainSpec>,
+    ) -> Result<Self> {
+        init_silenced_tracing();
 
         // Create the extension and keep a reference to get parts after launch
         let extension = FlashblocksTestExtension::new(process_canonical);
@@ -338,6 +351,14 @@ impl FlashblocksBuilderTestHarness {
         // the automatic canonical listener and only apply blocks when the test explicitly requests
         // it.
         let node = FlashblocksHarness::manual_canonical()
+            .await
+            .expect("able to launch flashblocks harness");
+        Self::from_harness(node)
+    }
+
+    /// Like [`Self::new`], on another chain than the default test genesis.
+    pub async fn with_chain_spec(chain_spec: Arc<ChainSpec>) -> Self {
+        let node = FlashblocksHarness::launch(false, LocalNodeOptions::default(), chain_spec)
             .await
             .expect("able to launch flashblocks harness");
         Self::from_harness(node)
@@ -563,6 +584,7 @@ impl<'a> FlashblockBuilder<'a> {
         let current_block = self.harness.node.latest_block();
         let canonical_block_num =
             self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
+        let timestamp = current_block.timestamp + 2;
 
         let base = (self.index == 0).then(|| ExecutionPayloadBaseV1 {
             parent_beacon_block_root: current_block.parent_beacon_block_root.unwrap_or_default(),
@@ -571,9 +593,10 @@ impl<'a> FlashblockBuilder<'a> {
             prev_randao: B256::random(),
             block_number: canonical_block_num,
             gas_limit: current_block.gas_limit,
-            timestamp: current_block.timestamp + 2,
+            timestamp,
             extra_data: Bytes::new(),
             base_fee_per_gas: U256::from(100),
+            slot_number: Some(slot_number_at(timestamp)),
         });
 
         FlashBlock {
@@ -590,6 +613,7 @@ impl<'a> FlashblockBuilder<'a> {
                 transactions: self.transactions.clone(),
                 blob_gas_used: 0,
                 excess_blob_gas: 0,
+                requests: None,
             },
             metadata: Metadata {
                 block_number: canonical_block_num,

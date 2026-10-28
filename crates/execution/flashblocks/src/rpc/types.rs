@@ -68,6 +68,13 @@ pub enum FlashblocksSubscriptionKind {
     ///   where at least one log matches the filter. All logs are included in the response, not just
     ///   the matching ones.
     NewFlashblockTransactions,
+    /// Returns one notification per flashblock: the transactions it added, with their logs (as
+    /// [`FlashblockBatch`](crate::FlashblockBatch)). The notification is sent even when the
+    /// flashblock added no matching transaction, so each notification is a complete flashblock.
+    ///
+    /// Accepts an optional log filter. With a filter, the batch keeps only the transactions where
+    /// at least one log matches, each with all of its logs.
+    NewFlashblockBatches,
 }
 
 impl ExtendedSubscriptionKind {

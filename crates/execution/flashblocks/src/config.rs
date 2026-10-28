@@ -2,11 +2,16 @@
 
 use std::{sync::Arc, time::Duration};
 
+use alloy_primitives::U256;
 use url::Url;
 
 use crate::FlashblocksState;
 
-pub const DEFAULT_INCLUSION_FEE_MAX_AGE: Duration = Duration::from_secs(3);
+pub const DEFAULT_INCLUSION_FEE_MAX_AGE: Duration = Duration::from_secs(15);
+
+/// The highest builder inclusion fee served, 1,000 gwei. Far above any usual priority fee, so it
+/// catches only a faulty value, such as a fee sent in the wrong unit.
+pub const DEFAULT_INCLUSION_FEE_CEILING: U256 = U256::from_limbs([1_000_000_000_000, 0, 0, 0]);
 
 /// Flashblocks-specific configuration knobs.
 #[derive(Debug, Clone)]
@@ -19,6 +24,8 @@ pub struct FlashblocksConfig {
     pub subscriber_ping_interval: Duration,
     /// Age after which a received inclusion fee gives way to the node's oracle.
     pub inclusion_fee_max_age: Duration,
+    /// The highest inclusion fee served; a higher one gives way to the node's oracle.
+    pub inclusion_fee_ceiling: U256,
     /// Shared Flashblocks state.
     pub state: Arc<FlashblocksState>,
 }
@@ -32,6 +39,7 @@ impl FlashblocksConfig {
             max_pending_blocks_depth,
             subscriber_ping_interval: Duration::from_secs(30),
             inclusion_fee_max_age: DEFAULT_INCLUSION_FEE_MAX_AGE,
+            inclusion_fee_ceiling: DEFAULT_INCLUSION_FEE_CEILING,
             state,
         }
     }
@@ -40,6 +48,12 @@ impl FlashblocksConfig {
     pub fn with_inclusion_fee_max_age(mut self, inclusion_fee_max_age: Duration) -> Self {
         assert!(!inclusion_fee_max_age.is_zero(), "fee inclusion_fee max age must be positive");
         self.inclusion_fee_max_age = inclusion_fee_max_age;
+        self
+    }
+
+    /// Set the highest inclusion fee served.
+    pub const fn with_inclusion_fee_ceiling(mut self, inclusion_fee_ceiling: U256) -> Self {
+        self.inclusion_fee_ceiling = inclusion_fee_ceiling;
         self
     }
 

@@ -15,6 +15,18 @@ pub struct Metrics {
     #[metric(describe = "Count of times upstream receiver was closed/errored")]
     pub upstream_errors: Counter,
 
+    /// Keys in received flashblocks that this node does not read, one per key per flashblock.
+    #[metric(describe = "Count of keys in received flashblocks that this node does not read")]
+    pub unknown_wire_fields: Counter,
+
+    /// Received base payloads that carry no slot number.
+    #[metric(describe = "Count of received base payloads that carry no slot number")]
+    pub wire_slot_number_missing: Counter,
+
+    /// Received flashblocks whose diff carries no requests list.
+    #[metric(describe = "Count of received flashblocks whose diff carries no requests list")]
+    pub wire_requests_missing: Counter,
+
     /// Count of messages received from the upstream source.
     #[metric(describe = "Count of messages received from the upstream source")]
     pub upstream_messages: Counter,
@@ -59,6 +71,13 @@ pub struct Metrics {
     #[metric(describe = "Count of times flashblocks are unable to be converted to blocks")]
     pub block_processing_error: Counter,
 
+    /// Flashblock transaction executions whose result, success or failure, differs from the
+    /// status of the producer's receipt.
+    #[metric(
+        describe = "Count of flashblock transactions whose status here differs from the producer's"
+    )]
+    pub transaction_status_mismatch: Counter,
+
     /// Count of times pending snapshot was cleared because canonical caught up.
     #[metric(
         describe = "Number of times pending snapshot was cleared because canonical caught up"
@@ -82,6 +101,27 @@ pub struct Metrics {
         describe = "Number of times pending was dropped for drifting too far behind the canonical tip"
     )]
     pub pending_drop_stale: Counter,
+
+    /// Canonical blocks whose withdrawals root differed from the one pending assembled.
+    #[metric(
+        describe = "Count of canonical blocks whose withdrawals root differed from pending's"
+    )]
+    pub pending_withdrawals_root_mismatch: Counter,
+
+    /// Canonical blocks whose requests hash differed from pending's, where pending's came from the
+    /// producer's requests list.
+    #[metric(describe = "Count of canonical blocks whose requests hash differed from pending's")]
+    pub pending_requests_hash_mismatch: Counter,
+
+    /// Canonical blocks whose slot number differed from pending's.
+    #[metric(describe = "Count of canonical blocks whose slot number differed from pending's")]
+    pub pending_slot_number_mismatch: Counter,
+
+    /// Canonical blocks whose transactions did not start with the ones pending held.
+    #[metric(
+        describe = "Count of canonical blocks whose transactions did not start with pending's"
+    )]
+    pub pending_tx_prefix_violation: Counter,
 
     /// Pending snapshot flashblock index (current).
     #[metric(describe = "Pending snapshot flashblock index (current)")]
@@ -176,6 +216,10 @@ pub struct Metrics {
     /// `newFlashblockTransactions` subscriptions opened, in any parameter form.
     #[metric(describe = "Count of newFlashblockTransactions subscriptions opened")]
     pub subscriptions_new_flashblock_transactions: Counter,
+
+    /// `newFlashblockBatches` subscriptions opened, with or without a filter.
+    #[metric(describe = "Count of newFlashblockBatches subscriptions opened")]
+    pub subscriptions_new_flashblock_batches: Counter,
 
     /// Time taken to clone bundle state.
     #[metric(describe = "Time taken to clone bundle state")]

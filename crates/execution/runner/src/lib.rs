@@ -6,6 +6,8 @@ pub mod eth_api;
 pub mod pending_state;
 pub use pending_state::{PendingOverlay, PendingStateSource};
 
+mod pending_provider;
+
 mod builder;
 pub use builder::{EthgasRpcContext, NodeHooks};
 

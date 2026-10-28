@@ -8,6 +8,7 @@ edition.workspace = true
 ethgas-reth-flashblocks.workspace = true
 ethgas-flashblocks-node.workspace = true
 ethgas-node-runner.workspace = true
+ethgas-simulator.workspace = true
 ethgas-cli-utils.workspace = true
 
 # reth

@@ -22,6 +22,13 @@ pub enum ProtocolError {
     /// Genesis has no parent state on which to execute a flashblock.
     #[error("cannot execute a genesis flashblock: block zero has no parent")]
     GenesisFlashblock,
+
+    /// An Amsterdam block's base payload carries no slot number.
+    #[error("missing slot number: block {block_number} is an Amsterdam block")]
+    MissingSlotNumber {
+        /// The block whose base payload lacks the slot number.
+        block_number: u64,
+    },
 }
 
 /// Errors related to state provider and infrastructure operations.
@@ -59,6 +66,17 @@ pub enum ExecutionError {
     MissingReceipt {
         /// The hash of the transaction whose receipt is absent.
         tx_hash: B256,
+    },
+    /// The producer's receipt says the transaction succeeded and this node's execution says it
+    /// failed, or the other way round.
+    #[error(
+        "receipt status of tx {tx_hash} contradicts execution: producer success {producer_success}"
+    )]
+    StatusMismatch {
+        /// The hash of the transaction.
+        tx_hash: B256,
+        /// The status the producer's receipt carries.
+        producer_success: bool,
     },
 
     /// ECDSA signature recovery failed.
@@ -154,6 +172,10 @@ mod tests {
     #[case::genesis_flashblock(
         ProtocolError::GenesisFlashblock,
         "cannot execute a genesis flashblock: block zero has no parent"
+    )]
+    #[case::missing_slot_number(
+        ProtocolError::MissingSlotNumber { block_number: 7 },
+        "missing slot number: block 7 is an Amsterdam block"
     )]
     fn test_protocol_error_display(#[case] error: ProtocolError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);

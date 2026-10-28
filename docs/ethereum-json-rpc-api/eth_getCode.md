@@ -4,7 +4,7 @@ Returns the contract bytecode deployed at an address.
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Yes** |
+| At `pending` | **Pre-confirmed** |
 
 ## Parameters
 
@@ -15,7 +15,7 @@ Returns the contract bytecode deployed at an address.
 
 ## Returns
 
-`string` — the bytecode as a hex string, or `"0x"` when the account holds no code.
+`string`: the bytecode as a hex string, or `"0x"` when the account holds no code.
 
 ## Example
 
@@ -25,7 +25,7 @@ Returns the contract bytecode deployed at an address.
 {
   "jsonrpc": "2.0",
   "method": "eth_getCode",
-  "params": ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "pending"],
+  "params": ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "pending"],
   "id": 1
 }
 ```
@@ -44,8 +44,6 @@ Returns the contract bytecode deployed at an address.
 
 `pending` shows a contract deployed by a pre-confirmed transaction, before its block is sealed. The
 code comes from the node's own execution of the flashblock transactions on top of the latest
-confirmed block, so it agrees with what `eth_call` at `pending` runs against.
+block, so it agrees with what `eth_call` at `pending` runs against.
 
 A contract that exists only in the node's mempool is never visible at `pending`.
-
-The bytecode returned is the account's original bytecode, not a padded representation.

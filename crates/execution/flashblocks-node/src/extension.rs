@@ -39,6 +39,7 @@ impl EthgasNodeExtension for FlashblocksExtension {
         };
 
         let inclusion_fee_max_age = cfg.inclusion_fee_max_age;
+        let inclusion_fee_ceiling = cfg.inclusion_fee_ceiling;
         let state = cfg.state;
         let mut subscriber = FlashblocksSubscriber::new(
             Arc::clone(&state),
@@ -96,19 +97,23 @@ impl EthgasNodeExtension for FlashblocksExtension {
                 ctx.registry.eth_api().clone(),
                 Arc::clone(&state_for_rpc),
                 inclusion_fee_max_age,
+                inclusion_fee_ceiling,
             );
             ctx.modules.replace_configured(EthFeeOverrideServer::into_rpc(ethgas_api.clone()))?;
             ctx.modules.merge_configured(EthgasApiServer::into_rpc(ethgas_api))?;
 
-            // Register the flashblocks-aware `eth_subscribe` endpoint. Uses `replace_configured`
-            // because `eth_subscribe` already exists from reth's standard module; standard
-            // subscription kinds are proxied to reth's `EthPubSub` via the passed `eth_api`.
-            let eth_pubsub = EthPubSub::new(
-                ctx.registry.eth_api().clone(),
-                ctx.node().task_executor.clone(),
-                state_for_rpc,
-            );
-            ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
+            // Register the flashblocks-aware `eth_subscribe` endpoint in place of reth's; standard
+            // subscription kinds are proxied to reth's `EthPubSub` via the passed `eth_api`. One
+            // instance per transport: each transport numbers its connections from zero, and the
+            // per-connection subscription cap counts by connection id.
+            let eth_api = ctx.registry.eth_api().clone();
+            let task_executor = ctx.node().task_executor.clone();
+            let eth_pubsub = || {
+                EthPubSub::new(eth_api.clone(), task_executor.clone(), Arc::clone(&state_for_rpc))
+            };
+            ctx.modules.replace_http(eth_pubsub().into_rpc())?;
+            ctx.modules.replace_ws(eth_pubsub().into_rpc())?;
+            ctx.modules.replace_ipc(eth_pubsub().into_rpc())?;
 
             Ok(())
         })

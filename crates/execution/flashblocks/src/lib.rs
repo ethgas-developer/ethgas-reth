@@ -23,7 +23,9 @@ pub use metrics::Metrics;
 
 pub mod payload;
 pub mod pending_blocks;
-pub use pending_blocks::{PendingBlocks, PendingBlocksBuilder, TransactionWithLogs};
+pub use pending_blocks::{
+    FlashblockBatch, PendingBlocks, PendingBlocksBuilder, TransactionWithLogs,
+};
 
 pub mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
@@ -42,12 +44,13 @@ pub use subscription::FlashblocksSubscriber;
 
 pub mod validation;
 pub use validation::{
-    CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
-    ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
+    CanonicalBlockOracle, CanonicalBlockReconciler, CanonicalMismatch, FlashblockSequenceValidator,
+    ReconciliationStrategy, ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
 };
 
 pub mod rpc;
 pub use rpc::{
     EthApiExt, EthApiOverrideServer, EthFeeOverrideServer, EthPubSub, EthPubSubApiServer,
     EthgasApiExt, EthgasApiServer, ExtendedSubscriptionKind, FlashblocksSubscriptionKind,
+    MAX_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION, MAX_NEW_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION,
 };

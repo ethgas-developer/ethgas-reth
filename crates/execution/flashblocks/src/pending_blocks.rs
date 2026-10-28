@@ -51,6 +51,21 @@ pub struct TransactionWithLogs {
     pub logs_bloom: Bloom,
 }
 
+/// The transactions one flashblock added to the pending block, in a single notification.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlashblockBatch {
+    /// The block the flashblock belongs to.
+    #[serde(with = "alloy_serde::quantity")]
+    pub block_number: BlockNumber,
+    /// The flashblock's position in its block. It restarts at 0 when the builder rebuilds the
+    /// block.
+    #[serde(with = "alloy_serde::quantity")]
+    pub flashblock_index: u64,
+    /// The transactions the flashblock added, in block order.
+    pub transactions: Vec<TransactionWithLogs>,
+}
+
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
 pub struct PendingBlocksBuilder {
@@ -182,6 +197,7 @@ impl PendingBlocksBuilder {
         Ok(PendingBlocks {
             earliest_header,
             latest_header,
+            headers: self.headers,
             latest_flashblock_index,
             flashblocks: self.flashblocks,
             transactions: self.transactions,
@@ -201,6 +217,8 @@ impl PendingBlocksBuilder {
 pub struct PendingBlocks {
     earliest_header: Sealed<Header>,
     latest_header: Sealed<Header>,
+    /// One header per pending block, in block order.
+    headers: Vec<Sealed<Header>>,
     latest_flashblock_index: u64,
     flashblocks: Vec<FlashBlock>,
     transactions: Vec<Transaction>,
@@ -265,6 +283,11 @@ impl PendingBlocks {
     #[inline]
     pub fn latest_header(&self) -> Sealed<Header> {
         self.latest_header.clone()
+    }
+
+    /// Returns the header assembled for `block_number`, if pending covers that block.
+    pub fn header_for_block(&self, block_number: BlockNumber) -> Option<&Sealed<Header>> {
+        self.headers.iter().find(|header| header.number == block_number)
     }
 
     /// Returns all flashblocks.
@@ -493,6 +516,23 @@ impl PendingBlocks {
             .collect()
     }
 
+    /// Returns what the latest flashblock added, as one batch.
+    ///
+    /// With a filter, the batch keeps only the transactions where at least one log matches, as
+    /// `get_latest_flashblock_transactions_with_logs_filtered` does.
+    pub fn get_latest_flashblock_batch(&self, filter: Option<&Filter>) -> FlashblockBatch {
+        let transactions = match filter {
+            Some(filter) => self.get_latest_flashblock_transactions_with_logs_filtered(filter),
+            None => self.get_latest_flashblock_transactions_with_logs(),
+        };
+
+        FlashblockBatch {
+            block_number: self.latest_block_number(),
+            flashblock_index: self.latest_flashblock_index,
+            transactions,
+        }
+    }
+
     /// Returns the hashes of transactions from only the latest flashblock (delta).
     ///
     /// Unlike `get_pending_transaction_hashes`, this returns only hashes
@@ -549,7 +589,8 @@ mod tests {
     };
     use alloy_network::TransactionResponse;
     use alloy_primitives::{
-        Address, B256, Bloom, Bytes, Log as PrimitiveLog, LogData, Signature, TxKind, U256,
+        Address, B256, BlockNumber, Bloom, Bytes, Log as PrimitiveLog, LogData, Signature, TxKind,
+        U256,
     };
     use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt, Withdrawal};
     use alloy_rpc_types_engine::PayloadId;
@@ -652,6 +693,29 @@ mod tests {
             err,
             StateProcessorError::Build(BuildError::DuplicateTransaction { tx_hash: hash })
         );
+    }
+
+    #[test]
+    fn every_pending_block_keeps_its_own_header() {
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        for number in [1, 2] {
+            builder.with_header(Sealed::new_unchecked(
+                Header { number, ..Default::default() },
+                B256::with_last_byte(number as u8),
+            ));
+        }
+        let pending = builder.build().expect("build should succeed");
+
+        assert_eq!(
+            pending.header_for_block(1).map(|header| header.hash()),
+            Some(B256::with_last_byte(1))
+        );
+        assert_eq!(
+            pending.header_for_block(2).map(|header| header.hash()),
+            Some(B256::with_last_byte(2))
+        );
+        assert!(pending.header_for_block(3).is_none());
     }
 
     fn receipt_with_log(tx_hash: B256, log_address: Address) -> TransactionReceipt {
@@ -897,5 +961,67 @@ mod tests {
 
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].transaction.tx_hash(), hash_a);
+    }
+
+    /// Two flashblocks: index 0 of block 7 adds `first`, and the flashblock at `(block, index)`
+    /// adds `second`.
+    fn build_two_flashblocks(
+        first: (B256, Address),
+        second: (B256, Address),
+        (block, index): (BlockNumber, u64),
+    ) -> PendingBlocks {
+        let flashblock = |block, index| {
+            let mut flashblock = test_flashblock();
+            flashblock.index = index;
+            flashblock.metadata.block_number = block;
+            flashblock.diff.transactions = vec![Bytes::new()];
+            flashblock
+        };
+        let header =
+            |number| Sealed::new_unchecked(Header { number, ..Default::default() }, B256::ZERO);
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([flashblock(7, 0), flashblock(block, index)]);
+        builder.with_header(header(7));
+        if block != 7 {
+            builder.with_header(header(block));
+        }
+        for (hash, address) in [first, second] {
+            builder.with_transaction(test_transaction_with_hash(hash));
+            builder.with_receipt(hash, receipt_with_log(hash, address));
+        }
+        builder.build().expect("build should succeed")
+    }
+
+    #[test]
+    fn latest_flashblock_batch_holds_only_what_the_latest_flashblock_added() {
+        let (ha, hb) = (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB));
+        let (aa, ab) = (Address::with_last_byte(0x0A), Address::with_last_byte(0x0B));
+
+        // Index 1 of block 7, and block 8's index 0 while block 7 is still pending.
+        for (block, index) in [(7, 1), (8, 0)] {
+            let pending = build_two_flashblocks((ha, aa), (hb, ab), (block, index));
+
+            let batch = pending.get_latest_flashblock_batch(None);
+
+            assert_eq!((batch.block_number, batch.flashblock_index), (block, index));
+            assert_eq!(batch.transactions.len(), 1, "block {block}, index {index}");
+            assert_eq!(batch.transactions[0].transaction.tx_hash(), hb);
+        }
+    }
+
+    #[test]
+    fn latest_flashblock_batch_applies_the_filter_and_can_be_empty() {
+        let (ha, hb) = (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB));
+        let (aa, ab) = (Address::with_last_byte(0x0A), Address::with_last_byte(0x0B));
+        let pending = build_two_flashblocks((ha, aa), (hb, ab), (7, 1));
+
+        let matched = pending.get_latest_flashblock_batch(Some(&Filter::new().address(ab)));
+        assert_eq!(matched.transactions.len(), 1);
+        assert_eq!(matched.transactions[0].transaction.tx_hash(), hb);
+
+        // The only match for `aa` is in the earlier flashblock.
+        let empty = pending.get_latest_flashblock_batch(Some(&Filter::new().address(aa)));
+        assert_eq!(empty.flashblock_index, 1);
+        assert!(empty.transactions.is_empty());
     }
 }

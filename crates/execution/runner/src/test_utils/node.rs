@@ -23,15 +23,20 @@ use reth_node_ethereum::{
     EthereumNode,
     node::{EthereumAddOns, EthereumEngineValidatorBuilder},
 };
-use reth_provider::providers::BlockchainProvider;
+use reth_provider::{ChainSpecProvider, providers::BlockchainProvider};
+use reth_tasks::Runtime;
 
 use crate::{
     EthgasNodeExtension, NodeHooks, PendingStateSource, eth_api::EthgasEthApiBuilder,
-    test_utils::engine::EngineApi, types::EthProvider,
+    runner::remove_proof_methods, test_utils::engine::EngineApi, types::EthProvider,
 };
 
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = EthProvider;
+
+/// Execution cache of a test node, in MB. reth's default, 4096, makes every node that executes a
+/// block allocate 2,176 MiB; reth's own test nodes use 1.
+const CROSS_BLOCK_CACHE_SIZE_MB: usize = 1;
 
 /// Options for a [`LocalNode`] beyond the defaults.
 #[derive(Debug, Default, Clone)]
@@ -47,7 +52,11 @@ pub struct LocalNodeOptions {
     pub send_raw_transaction_sync_timeout: Option<Duration>,
 }
 
+/// Longest wait for each of the two shutdown steps when a [`LocalNode`] is dropped.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Handle to a launched local node along with the resources required to keep it alive.
+/// Dropping it shuts the node down and removes its datadir.
 pub struct LocalNode {
     pub(crate) http_api_addr: SocketAddr,
     engine_ipc_path: String,
@@ -56,14 +65,22 @@ pub struct LocalNode {
     provider: LocalNodeProvider,
     network: Arc<dyn NetworkSyncUpdater>,
     _node_exit_future: NodeExitFuture,
-    _node: Box<dyn Any + Sync + Send>,
-    _runtime: reth_tasks::Runtime,
-    _db_path: PathBuf,
+    node: Option<Box<dyn Any + Sync + Send>>,
+    runtime: Runtime,
+    db_path: PathBuf,
 }
 
 impl Drop for LocalNode {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self._db_path);
+        let runtime = self.runtime.clone();
+        let node = self.node.take();
+        let shutdown = std::thread::spawn(move || {
+            runtime.graceful_shutdown_with_timeout(SHUTDOWN_TIMEOUT);
+            drop(node);
+            runtime.shutdown_timeout(SHUTDOWN_TIMEOUT);
+        });
+        let _ = shutdown.join();
+        let _ = std::fs::remove_dir_all(&self.db_path);
     }
 }
 
@@ -107,7 +124,9 @@ impl LocalNode {
         pending_state: Option<Arc<dyn PendingStateSource>>,
         options: LocalNodeOptions,
     ) -> Result<Self> {
-        let exec = reth_tasks::Runtime::test();
+        let exec = std::thread::spawn(Runtime::test)
+            .join()
+            .map_err(|_| eyre::eyre!("failed to build the node's runtime"))?;
 
         let network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
@@ -150,6 +169,7 @@ impl LocalNode {
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
+        node_config.engine.cross_block_cache_size = CROSS_BLOCK_CACHE_SIZE_MB;
         if let Some(persistence_threshold) = options.persistence_threshold {
             node_config.engine.persistence_threshold = persistence_threshold;
         }
@@ -174,8 +194,9 @@ impl LocalNode {
         let NodeHandle { node: node_handle, node_exit_future } = extensions
             .into_iter()
             .fold(NodeHooks::new(), |b, ext| ext.apply(b))
+            .add_rpc_module(remove_proof_methods)
             .apply_to(builder)
-            .launch()
+            .launch_with_debug_capabilities()
             .await?;
 
         let http_api_addr = node_handle
@@ -201,9 +222,9 @@ impl LocalNode {
             provider,
             network,
             _node_exit_future: node_exit_future,
-            _node: Box::new(node_handle),
-            _runtime: exec,
-            _db_path: db_path,
+            node: Some(Box::new(node_handle)),
+            runtime: exec,
+            db_path,
         })
     }
 
@@ -224,7 +245,7 @@ impl LocalNode {
 
     /// Build an Engine API client.
     pub fn engine_api(&self) -> Result<EngineApi> {
-        EngineApi::new(self.engine_ipc_path.clone())
+        EngineApi::new(self.engine_ipc_path.clone(), self.provider.chain_spec())
     }
 
     /// Clone the underlying blockchain provider.

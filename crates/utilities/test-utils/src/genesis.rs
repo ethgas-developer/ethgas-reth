@@ -13,12 +13,33 @@ pub const DEVNET_CHAIN_ID: u64 = 1;
 /// Gas limit for genesis block configuration.
 pub const GENESIS_GAS_LIMIT: u64 = 100_000_000;
 
-/// Builds a test genesis configuration programmatically.
-///
-/// Creates an Ethereum genesis with:
-/// - All EVM hardforks enabled from genesis (including Prague)
-/// - Pre-funded test accounts from the `Account` enum
+/// Added to a block's timestamp to give its slot number, so that no slot equals a block number or
+/// a timestamp and a test can tell the three apart.
+const SLOT_NUMBER_OFFSET: u64 = 1_000_000;
+
+/// The slot number of the test chain's block at `timestamp`. Every fixture that names a slot uses
+/// it, so a flashblock and a canonical block at the same timestamp agree.
+pub const fn slot_number_at(timestamp: u64) -> u64 {
+    timestamp + SLOT_NUMBER_OFFSET
+}
+
+/// Builds the test genesis: every fork through Amsterdam active from genesis, and the accounts of
+/// the `Account` enum funded.
 pub fn build_test_genesis() -> Genesis {
+    build_test_genesis_with_amsterdam_at(Some(0))
+}
+
+/// [`build_test_genesis`] with Osaka at genesis and Amsterdam at `amsterdam_time`: `Some(0)` at
+/// genesis, a later timestamp to fork while a test runs, `None` never.
+pub fn build_test_genesis_with_amsterdam_at(amsterdam_time: Option<u64>) -> Genesis {
+    let mut genesis = build_prague_test_genesis();
+    genesis.config.osaka_time = Some(0);
+    genesis.config.amsterdam_time = amsterdam_time;
+    genesis
+}
+
+/// The test genesis with Prague as its newest fork, for the engine methods Osaka retired.
+pub fn build_prague_test_genesis() -> Genesis {
     // Test account balance: 1 million ETH
     let test_account_balance: U256 = parse_ether("1000000").expect("valid ether amount");
 

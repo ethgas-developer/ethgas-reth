@@ -5,6 +5,7 @@ use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use ethgas_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
+use ethgas_node_runner::test_utils::Account;
 use ethgas_reth_flashblocks::{
     fee::{FeeSource, InclusionPriorityFee},
     payload::InclusionFee,
@@ -97,5 +98,44 @@ async fn gas_price_adds_the_inclusion_fee_to_the_next_base_fee_while_held() -> R
 
     let released = harness.node.provider().get_gas_price().await?;
     assert_eq!(released, base_fee + u128::from(ORACLE_SUGGESTION));
+    Ok(())
+}
+
+/// The builder's fee prices the block it is building. Once that block is sealed the node serves its
+/// own suggestion, however fresh the fee is.
+#[tokio::test]
+async fn the_inclusion_fee_expires_with_its_block() -> Result<()> {
+    let mut harness = FlashblocksBuilderTestHarness::new().await;
+    let flashblock =
+        FlashblockBuilder::new_base(&harness).with_inclusion_fee(inclusion_fee()).build();
+    harness.send_flashblock(flashblock).await;
+    assert_eq!(inclusion_priority_fee(&harness).await?.source, FeeSource::Builder);
+
+    harness.new_canonical_block(vec![]).await;
+
+    let served = inclusion_priority_fee(&harness).await?;
+    assert_eq!(served.source, FeeSource::Fallback);
+    assert_eq!(served.block_number, None);
+    Ok(())
+}
+
+/// `eth_fillTransaction` gives a request that sets no fee the builder's inclusion fee as its
+/// priority fee, the value `eth_maxPriorityFeePerGas` serves.
+#[tokio::test]
+async fn fill_transaction_takes_the_inclusion_fee_while_held() -> Result<()> {
+    let harness = FlashblocksBuilderTestHarness::new().await;
+    let flashblock =
+        FlashblockBuilder::new_base(&harness).with_inclusion_fee(inclusion_fee()).build();
+    harness.send_flashblock(flashblock).await;
+
+    let request = serde_json::json!({
+        "from": Account::Alice.address(),
+        "to": Account::Bob.address(),
+        "value": "0x1",
+    });
+    let filled: serde_json::Value =
+        harness.node.rpc_client()?.request("eth_fillTransaction", (request,)).await?;
+
+    assert_eq!(filled["tx"]["maxPriorityFeePerGas"], format!("{INCLUSION_FEE:#x}"), "{filled}");
     Ok(())
 }

@@ -8,8 +8,7 @@ use std::{future::Future, sync::Arc, time::Duration};
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::WithEncoded};
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types::{eth::EIP1186AccountProofResponse, serde_helpers::JsonStorageKey};
+use alloy_primitives::{B256, U256};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::{ConfigureEvm, EvmEnvFor};
@@ -37,12 +36,12 @@ use reth_rpc_eth_types::{
     builder::config::PendingBlockKind,
 };
 use reth_tasks::pool::{BlockingTaskGuard, BlockingTaskPool};
-
-use crate::pending_state::{PendingOverlay, PendingStateSource};
-
-/// The most storage keys one `eth_getProof` request may carry, as in go-ethereum.
-pub const MAX_PROOF_KEYS: usize = 1024;
 use reth_transaction_pool::{PoolTx, TransactionOrigin};
+
+use crate::{
+    pending_provider::PendingStateProvider,
+    pending_state::{PendingOverlay, PendingStateSource},
+};
 
 /// The node's `eth` API.
 #[derive(Debug)]
@@ -132,8 +131,9 @@ where
     ///
     /// An executed engine block at least as new as the snapshot is the better answer: it holds
     /// the transactions that sealed and the withdrawals the bundle omits. And the bundle is only
-    /// coherent on the exact block it was executed against; the overlay resolves that block
-    /// lazily, on its first read, so the check is here, where `None` still falls back.
+    /// coherent on the exact block it was executed against, which must still be on the chain:
+    /// the check is here, where `None` still falls back, because opening that block's state
+    /// fails once it has left the chain.
     fn served_overlay(&self) -> Result<Option<PendingOverlay<N::Primitives>>, EthApiError> {
         let Some(overlay) = self.pending_state.as_ref().and_then(|source| source.pending_overlay())
         else {
@@ -259,58 +259,6 @@ where
     #[inline]
     fn max_proof_window(&self) -> u64 {
         self.inner.max_proof_window()
-    }
-
-    /// Refuses more than [`MAX_PROOF_KEYS`] storage keys before any trie work.
-    ///
-    /// Each key is a trie walk on the blocking pool, so an unbounded request can hold the
-    /// node's executor for seconds. The window check stays this type's, so `pending` is refused
-    /// while an overlay is served.
-    fn get_proof(
-        &self,
-        address: Address,
-        keys: Vec<JsonStorageKey>,
-        block_id: Option<BlockId>,
-    ) -> Result<
-        impl Future<Output = Result<EIP1186AccountProofResponse, Self::Error>> + Send,
-        Self::Error,
-    >
-    where
-        Self: EthApiSpec,
-    {
-        let api_err = |err: EthApiError| -> Self::Error { err.into() };
-        if keys.len() > MAX_PROOF_KEYS {
-            return Err(api_err(EthApiError::InvalidParams(format!(
-                "too many storage keys: max {MAX_PROOF_KEYS}, got {}",
-                keys.len()
-            ))));
-        }
-        let block_id = block_id.unwrap_or_default();
-        self.ensure_within_proof_window(block_id)?;
-        let proof = self.inner.get_proof(address, keys, Some(block_id)).map_err(api_err)?;
-        Ok(async move { proof.await.map_err(api_err) })
-    }
-
-    /// Refuses `pending` while an overlay is served.
-    ///
-    /// `eth_getProof`, `eth_getMultiProof` and `eth_getAccount` are the only callers. The overlay
-    /// has no trie data, so a proof over it would be well-formed and match no block. When no
-    /// overlay is served, `pending` resolves through the provider and reth's own check applies.
-    fn ensure_within_proof_window(&self, block_id: BlockId) -> Result<(), Self::Error>
-    where
-        Self: EthApiSpec,
-    {
-        let api_err = |err: EthApiError| -> Self::Error { err.into() };
-        if block_id.is_pending() && self.served_overlay().map_err(api_err)?.is_some() {
-            return Err(EthApiError::InvalidParams(
-                "pending is not supported by this method: pending state is built from \
-                 flashblocks and carries no state root, so no proof can be derived from it"
-                    .to_string(),
-            )
-            .into());
-        }
-
-        self.inner.ensure_within_proof_window(block_id).map_err(Into::into)
     }
 }
 
@@ -455,14 +403,11 @@ where
             return Ok(None);
         };
 
-        let state = self
-            .provider()
-            .state_with_block_appended(overlay.anchor.hash(), overlay.executed)
-            .map_err(|err| -> Self::Error {
-                <EthApiError as From<ProviderError>>::from(err).into()
-            })?;
+        let anchor = self.provider().state_by_block_hash(overlay.anchor.hash()).map_err(
+            |err| -> Self::Error { <EthApiError as From<ProviderError>>::from(err).into() },
+        )?;
 
-        Ok(Some(state))
+        Ok(Some(Box::new(PendingStateProvider::new(anchor, overlay.bundle))))
     }
 
     /// Returns the block the engine has executed but not yet made canonical, else the canonical

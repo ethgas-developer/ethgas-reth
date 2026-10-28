@@ -198,6 +198,7 @@ subscriptions (`newHeads`, `logs`, `newPendingTransactions`, `syncing`) continue
 | [`newFlashblocks`](./flashblocks-api/newFlashblocks.md) | none | The current pending block, on every new flashblock |
 | [`pendingLogs`](./flashblocks-api/pendingLogs.md) | a log filter | Logs from the latest flashblock that match the filter |
 | [`newFlashblockTransactions`](./flashblocks-api/newFlashblockTransactions.md) | see below | Transactions from the latest flashblock |
+| [`newFlashblockBatches`](./flashblocks-api/newFlashblockBatches.md) | none, or a log filter | The latest flashblock's transactions and logs, in one notification, even when none match |
 
 `newFlashblockTransactions` accepts three parameter forms:
 

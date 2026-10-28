@@ -51,6 +51,21 @@ pub struct TransactionWithLogs {
     pub logs_bloom: Bloom,
 }
 
+/// The transactions one flashblock added to the pending block, in a single notification.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlashblockBatch {
+    /// The block the flashblock belongs to.
+    #[serde(with = "alloy_serde::quantity")]
+    pub block_number: BlockNumber,
+    /// The flashblock's position in its block. It restarts at 0 when the builder rebuilds the
+    /// block.
+    #[serde(with = "alloy_serde::quantity")]
+    pub flashblock_index: u64,
+    /// The transactions the flashblock added, in block order.
+    pub transactions: Vec<TransactionWithLogs>,
+}
+
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
 pub struct PendingBlocksBuilder {
@@ -501,6 +516,23 @@ impl PendingBlocks {
             .collect()
     }
 
+    /// Returns what the latest flashblock added, as one batch.
+    ///
+    /// With a filter, the batch keeps only the transactions where at least one log matches, as
+    /// `get_latest_flashblock_transactions_with_logs_filtered` does.
+    pub fn get_latest_flashblock_batch(&self, filter: Option<&Filter>) -> FlashblockBatch {
+        let transactions = match filter {
+            Some(filter) => self.get_latest_flashblock_transactions_with_logs_filtered(filter),
+            None => self.get_latest_flashblock_transactions_with_logs(),
+        };
+
+        FlashblockBatch {
+            block_number: self.latest_block_number(),
+            flashblock_index: self.latest_flashblock_index,
+            transactions,
+        }
+    }
+
     /// Returns the hashes of transactions from only the latest flashblock (delta).
     ///
     /// Unlike `get_pending_transaction_hashes`, this returns only hashes
@@ -928,5 +960,57 @@ mod tests {
 
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].transaction.tx_hash(), hash_a);
+    }
+
+    /// Block 7 in two flashblocks: index 0 adds `first`, index 1 adds `second`.
+    fn build_two_flashblocks(first: (B256, Address), second: (B256, Address)) -> PendingBlocks {
+        let flashblock = |index| {
+            let mut flashblock = test_flashblock();
+            flashblock.index = index;
+            flashblock.metadata.block_number = 7;
+            flashblock.diff.transactions = vec![Bytes::new()];
+            flashblock
+        };
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([flashblock(0), flashblock(1)]);
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: 7, ..Default::default() },
+            B256::ZERO,
+        ));
+        for (hash, address) in [first, second] {
+            builder.with_transaction(test_transaction_with_hash(hash));
+            builder.with_receipt(hash, receipt_with_log(hash, address));
+        }
+        builder.build().expect("build should succeed")
+    }
+
+    #[test]
+    fn latest_flashblock_batch_holds_only_what_the_latest_flashblock_added() {
+        let (ha, hb) = (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB));
+        let (aa, ab) = (Address::with_last_byte(0x0A), Address::with_last_byte(0x0B));
+        let pending = build_two_flashblocks((ha, aa), (hb, ab));
+
+        let batch = pending.get_latest_flashblock_batch(None);
+
+        assert_eq!(batch.block_number, 7);
+        assert_eq!(batch.flashblock_index, 1);
+        assert_eq!(batch.transactions.len(), 1);
+        assert_eq!(batch.transactions[0].transaction.tx_hash(), hb);
+    }
+
+    #[test]
+    fn latest_flashblock_batch_applies_the_filter_and_can_be_empty() {
+        let (ha, hb) = (B256::with_last_byte(0xAA), B256::with_last_byte(0xBB));
+        let (aa, ab) = (Address::with_last_byte(0x0A), Address::with_last_byte(0x0B));
+        let pending = build_two_flashblocks((ha, aa), (hb, ab));
+
+        let matched = pending.get_latest_flashblock_batch(Some(&Filter::new().address(ab)));
+        assert_eq!(matched.transactions.len(), 1);
+        assert_eq!(matched.transactions[0].transaction.tx_hash(), hb);
+
+        // The only match for `aa` is in the earlier flashblock.
+        let empty = pending.get_latest_flashblock_batch(Some(&Filter::new().address(aa)));
+        assert_eq!(empty.flashblock_index, 1);
+        assert!(empty.transactions.is_empty());
     }
 }

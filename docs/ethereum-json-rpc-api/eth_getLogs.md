@@ -109,4 +109,5 @@ confirmed block. A range that starts below `pending` ends at the latest confirme
 with `eth_getFilterLogs` or `eth_getFilterChanges`, answers from the node's executed next block,
 else from the latest confirmed block, as on any node. Poll with `eth_getLogs` instead.
 
-To stream pending logs rather than poll, subscribe to `pendingLogs`.
+To stream pending logs rather than poll, subscribe to `pendingLogs`. To receive each flashblock's
+logs in one notification, subscribe to `newFlashblockBatches`.

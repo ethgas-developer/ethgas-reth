@@ -2,7 +2,8 @@
 //!
 //! This module provides an extended `eth_subscribe` implementation that supports both
 //! standard Ethereum subscription types (newHeads, logs, newPendingTransactions, syncing)
-//! and flashblocks-specific subscriptions (newFlashblocks, pendingLogs, newFlashblockTransactions).
+//! and flashblocks-specific subscriptions (newFlashblocks, pendingLogs, newFlashblockTransactions,
+//! newFlashblockBatches).
 
 use std::{
     collections::HashMap,
@@ -33,14 +34,14 @@ use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, error};
 
 use crate::{
-    FlashblocksAPI, PendingBlocks, TransactionWithLogs,
+    FlashblockBatch, FlashblocksAPI, PendingBlocks, TransactionWithLogs,
     metrics::Metrics,
     rpc::types::{ExtendedSubscriptionKind, FlashblocksSubscriptionKind},
 };
 
-/// The most `pendingLogs` and `newFlashblockTransactions` subscriptions one connection may hold
-/// together. Each subscription renders and queues its own copy of every message, so this bounds
-/// the work and the memory one connection can cause.
+/// The most `pendingLogs`, `newFlashblockTransactions` and `newFlashblockBatches` subscriptions one
+/// connection may hold together. Each subscription renders and queues its own copy of every
+/// message, so this bounds the work and the memory one connection can cause.
 pub const MAX_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION: usize = 32;
 
 /// The most `newFlashblocks` subscriptions one connection may hold. Every message of that kind is
@@ -73,7 +74,8 @@ impl Default for SlowSubscriberLimits {
 enum SlotKind {
     /// `newFlashblocks`: every message is the whole pending block.
     NewFlashblocks,
-    /// `pendingLogs` and `newFlashblockTransactions`: one message per log or transaction.
+    /// `pendingLogs`, `newFlashblockTransactions` and `newFlashblockBatches`: one message per log,
+    /// transaction or flashblock, and every message is delivered.
     PerItem,
 }
 
@@ -82,7 +84,8 @@ impl SlotKind {
         match kind {
             FlashblocksSubscriptionKind::NewFlashblocks => Self::NewFlashblocks,
             FlashblocksSubscriptionKind::PendingLogs |
-            FlashblocksSubscriptionKind::NewFlashblockTransactions => Self::PerItem,
+            FlashblocksSubscriptionKind::NewFlashblockTransactions |
+            FlashblocksSubscriptionKind::NewFlashblockBatches => Self::PerItem,
         }
     }
 
@@ -96,7 +99,7 @@ impl SlotKind {
     const fn name(self) -> &'static str {
         match self {
             Self::NewFlashblocks => "newFlashblocks",
-            Self::PerItem => "pendingLogs and newFlashblockTransactions",
+            Self::PerItem => "pendingLogs, newFlashblockTransactions and newFlashblockBatches",
         }
     }
 }
@@ -173,7 +176,7 @@ pub trait EthPubSubApi {
     ///
     /// Supports standard subscription types (newHeads, logs, newPendingTransactions, syncing)
     /// as well as flashblocks-specific subscriptions (newFlashblocks, pendingLogs,
-    /// newFlashblockTransactions).
+    /// newFlashblockTransactions, newFlashblockBatches).
     #[subscription(
         name = "subscribe" => "subscription",
         unsubscribe = "unsubscribe",
@@ -232,6 +235,9 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
             }
             FlashblocksSubscriptionKind::NewFlashblockTransactions => {
                 self.metrics.subscriptions_new_flashblock_transactions.increment(1)
+            }
+            FlashblocksSubscriptionKind::NewFlashblockBatches => {
+                self.metrics.subscriptions_new_flashblock_batches.increment(1)
             }
         }
     }
@@ -384,6 +390,34 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
             stream::iter,
         )
     }
+
+    /// Returns a stream that yields one batch per flashblock, with the transactions it added.
+    ///
+    /// A batch is yielded even when it holds no transactions, so a subscriber knows that each
+    /// flashblock is complete without waiting for the next one.
+    fn new_flashblock_batches_stream(
+        flashblocks_state: Arc<FB>,
+        filter: Option<Filter>,
+    ) -> impl Stream<Item = FlashblockBatch>
+    where
+        FB: FlashblocksAPI + Send + Sync + 'static,
+    {
+        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(
+            move |result| {
+                let pending_blocks = match result {
+                    Ok(blocks) => blocks,
+                    Err(err) => {
+                        error!(
+                            message = "Error in flashblocks stream for batches",
+                            error = %err
+                        );
+                        return None;
+                    }
+                };
+                Some(pending_blocks.get_latest_flashblock_batch(filter.as_ref()))
+            },
+        )
+    }
 }
 
 #[async_trait]
@@ -493,6 +527,22 @@ where
                     });
                 }
             },
+            FlashblocksSubscriptionKind::NewFlashblockBatches => {
+                let filter = match params {
+                    Some(Params::Logs(filter)) => Some(*filter),
+                    _ => None,
+                };
+
+                let stream = Self::new_flashblock_batches_stream(
+                    Arc::clone(&self.flashblocks_state),
+                    filter,
+                );
+
+                tokio::spawn(async move {
+                    pipe_from_stream(sink, stream, limits, &slot.queued_total).await;
+                    drop(slot);
+                });
+            }
         }
 
         Ok(())

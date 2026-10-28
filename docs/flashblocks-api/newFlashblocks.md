@@ -72,7 +72,8 @@ several notifications for the same block height as it grows.
 
 **The block is cumulative, not a delta.** Each notification contains every transaction sequenced
 into that block so far. If you want only what is new, subscribe to
-[`newFlashblockTransactions`](./newFlashblockTransactions.md) instead.
+[`newFlashblockTransactions`](./newFlashblockTransactions.md) or
+[`newFlashblockBatches`](./newFlashblockBatches.md) instead.
 
 **`hash` is `0x000…0` and each transaction's `blockHash` is `null`.** The block is not sealed.
 
@@ -82,7 +83,7 @@ into that block so far. If you want only what is new, subscribe to
 **To follow confirmed blocks instead**, use the standard `newHeads` subscription. It does not fire
 per flashblock.
 
-**Limits.** One connection holds at most 4 `newFlashblocks` subscriptions and 32 of the other two
+**Limits.** One connection holds at most 4 `newFlashblocks` subscriptions and 32 of the other three
 kinds, a subscription whose client stops reading ends, and a subscriber that falls behind skips
 flashblocks. See
 [`eth_subscribe`](../ethereum-json-rpc-api/eth_subscribe.md#limits).

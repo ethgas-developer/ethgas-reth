@@ -29,6 +29,7 @@ Opens a real-time subscription over a WebSocket or IPC connection. Returns a sub
 | `newFlashblocks` | none | The current pending block, on every new flashblock |
 | `pendingLogs` | a log filter | Logs from the latest flashblock matching the filter |
 | `newFlashblockTransactions` | `true`, a log filter, or none | Transactions from the latest flashblock |
+| `newFlashblockBatches` | a log filter, or none | The latest flashblock's transactions and logs, in one notification |
 
 ## Returns
 
@@ -88,8 +89,9 @@ pre-confirmed head, use `newFlashblocks`.
 
 ## Limits
 
-- One connection holds at most 4 `newFlashblocks` subscriptions, and at most 32 `pendingLogs` and
-  `newFlashblockTransactions` subscriptions together. A further one is refused with `-32006`.
+- One connection holds at most 4 `newFlashblocks` subscriptions, and at most 32 `pendingLogs`,
+  `newFlashblockTransactions` and `newFlashblockBatches` subscriptions together. A further one is
+  refused with `-32006`.
 - A connection keeps the messages its client has not read until it closes. Size
   `--rpc.max-connections` for that on a public endpoint; see [Run a node](../run-a-node.md#flashblocks-flags).
 - `newFlashblocks` sends a block only once the one before has gone out to the client, and skips
@@ -99,5 +101,6 @@ pre-confirmed head, use `newFlashblocks`.
   messages it has not read fill the connection's network buffers. `eth_unsubscribe` answers
   `false` for an ended subscription.
 - A subscriber that falls 20 flashblocks behind (4 s at the builder's 200 ms) skips them without
-  notice. `pendingLogs` and `newFlashblockTransactions` then miss those flashblocks' logs and
-  transactions; reconcile with `eth_getBlockByNumber("pending", true)` or with the sealed blocks.
+  notice. `pendingLogs`, `newFlashblockTransactions` and `newFlashblockBatches` then miss those
+  flashblocks' logs and transactions; reconcile with `eth_getBlockByNumber("pending", true)` or
+  with the sealed blocks.

@@ -23,7 +23,9 @@ pub use metrics::Metrics;
 
 pub mod payload;
 pub mod pending_blocks;
-pub use pending_blocks::{PendingBlocks, PendingBlocksBuilder, TransactionWithLogs};
+pub use pending_blocks::{
+    FlashblockBatch, PendingBlocks, PendingBlocksBuilder, TransactionWithLogs,
+};
 
 pub mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};

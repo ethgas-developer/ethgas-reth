@@ -705,9 +705,9 @@ async fn ws_request(
     }
 }
 
-/// One connection holds at most `MAX_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION` `pendingLogs` and
-/// `newFlashblockTransactions` subscriptions together. The next one is refused; an unsubscribe
-/// frees a slot, and another connection has its own slots.
+/// One connection holds at most `MAX_FLASHBLOCKS_SUBSCRIPTIONS_PER_CONNECTION` `pendingLogs`,
+/// `newFlashblockTransactions` and `newFlashblockBatches` subscriptions together. The next one is
+/// refused; an unsubscribe frees a slot, and another connection has its own slots.
 #[tokio::test]
 async fn test_flashblocks_subscriptions_per_connection_are_capped() -> Result<()> {
     let setup = TestSetup::new().await?;
@@ -722,6 +722,9 @@ async fn test_flashblocks_subscriptions_per_connection_are_capped() -> Result<()
 
     let refused = ws_request(&mut ws_stream, 1000, "eth_subscribe", json!(["pendingLogs"])).await?;
     assert_eq!(refused["error"]["code"], -32006, "the next subscription is refused: {refused}");
+    let refused =
+        ws_request(&mut ws_stream, 999, "eth_subscribe", json!(["newFlashblockBatches"])).await?;
+    assert_eq!(refused["error"]["code"], -32006, "batches count against the same cap: {refused}");
 
     let (mut other_stream, _) = connect_async(&ws_url).await?;
     ws_subscribe(&mut other_stream, 1, json!(["pendingLogs"])).await?;
@@ -2074,6 +2077,66 @@ async fn test_eth_subscribe_new_flashblock_transactions_with_a_log_filter() -> R
     // Five transactions without a matching log emit nothing.
     setup.send_flashblock(setup.create_second_payload()).await?;
     assert_no_notification(&mut ws).await;
+
+    Ok(())
+}
+
+/// The `result` of the next notification on subscription `id`, or an error after five seconds.
+async fn next_batch(ws: &mut WsStream, id: &str) -> Result<serde_json::Value> {
+    tokio::time::timeout(Duration::from_secs(5), next_notification(ws, id)).await?
+}
+
+/// Each flashblock arrives as one notification, also when nothing in it matches the filter, so the
+/// subscriber knows the flashblock is complete. A new payload for the same block restarts at index
+/// 0.
+#[tokio::test]
+async fn test_eth_subscribe_new_flashblock_batches_sends_one_notification_per_flashblock()
+-> Result<()> {
+    let setup = TestSetup::new().await?;
+    let (mut all, _) = connect_async(&setup.harness.ws_url()).await?;
+    let (mut filtered, _) = connect_async(&setup.harness.ws_url()).await?;
+    let all_id = ws_subscribe(&mut all, 1, json!(["newFlashblockBatches"])).await?;
+    let filtered_id =
+        ws_subscribe(&mut filtered, 1, json!(["newFlashblockBatches", {"address": LOG_EMITTER_A}]))
+            .await?;
+
+    setup
+        .send_flashblock(logs_payload(vec![
+            make_log(LOG_EMITTER_A, vec![TEST_LOG_TOPIC_0]),
+            make_log(LOG_EMITTER_B, vec![TEST_LOG_TOPIC_0]),
+        ]))
+        .await?;
+    for (ws, id) in [(&mut all, &all_id), (&mut filtered, &filtered_id)] {
+        let batch = next_batch(ws, id).await?;
+        assert_eq!(batch["blockNumber"], "0x1");
+        assert_eq!(batch["flashblockIndex"], "0x0");
+        let txs = batch["transactions"].as_array().expect("an array of transactions");
+        assert_eq!(txs.len(), 1);
+        assert_eq!(as_b256(&txs[0]["hash"]), TRANSFER_ETH_HASH);
+        assert_eq!(txs[0]["logs"].as_array().map(Vec::len), Some(2), "a match keeps all its logs");
+        assert_eq!(txs[0]["status"], "0x1");
+    }
+
+    // Five transactions without a matching log: the filtered subscriber still gets the flashblock.
+    setup.send_flashblock(setup.create_second_payload()).await?;
+    let batch = next_batch(&mut all, &all_id).await?;
+    assert_eq!(batch["flashblockIndex"], "0x1");
+    assert_eq!(batch["transactions"].as_array().map(Vec::len), Some(5));
+    let batch = next_batch(&mut filtered, &filtered_id).await?;
+    assert_eq!(batch["flashblockIndex"], "0x1");
+    assert_eq!(batch["transactions"], json!([]));
+
+    let mut rebuilt = logs_payload(vec![make_log(LOG_EMITTER_A, vec![TEST_LOG_TOPIC_1])]);
+    rebuilt.payload_id = PayloadId::new([1; 8]);
+    setup.send_flashblock(rebuilt).await?;
+    for (ws, id) in [(&mut all, &all_id), (&mut filtered, &filtered_id)] {
+        let batch = next_batch(ws, id).await?;
+        assert_eq!(batch["blockNumber"], "0x1");
+        assert_eq!(batch["flashblockIndex"], "0x0");
+        assert_eq!(batch["transactions"].as_array().map(Vec::len), Some(1));
+    }
+    assert_no_notification(&mut all).await;
+    assert_no_notification(&mut filtered).await;
 
     Ok(())
 }

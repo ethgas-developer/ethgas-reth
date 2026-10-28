@@ -65,6 +65,8 @@ available via `eth_subscribe`:
 - `newFlashblockTransactions` — transactions from the latest flashblock; accepts
   `true` (full tx + logs + gas), a log filter (full tx where any log matches), or
   no param (hashes only)
+- `newFlashblockBatches` — one notification per flashblock with all the
+  transactions it added, even when none match; accepts an optional log filter
 
 ### Simulator flags
 

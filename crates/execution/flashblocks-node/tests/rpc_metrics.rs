@@ -336,6 +336,7 @@ async fn every_flashblocks_path_increments_its_counter() -> Result<()> {
         (1, json!(["newFlashblocks"]), "subscriptions_new_flashblocks"),
         (2, json!(["pendingLogs", {}]), "subscriptions_pending_logs"),
         (3, json!(["newFlashblockTransactions"]), "subscriptions_new_flashblock_transactions"),
+        (4, json!(["newFlashblockBatches"]), "subscriptions_new_flashblock_batches"),
     ] {
         assert_eq!(
             growth(counter, async {

@@ -217,6 +217,10 @@ pub struct Metrics {
     #[metric(describe = "Count of newFlashblockTransactions subscriptions opened")]
     pub subscriptions_new_flashblock_transactions: Counter,
 
+    /// `newFlashblockBatches` subscriptions opened, with or without a filter.
+    #[metric(describe = "Count of newFlashblockBatches subscriptions opened")]
+    pub subscriptions_new_flashblock_batches: Counter,
+
     /// Time taken to clone bundle state.
     #[metric(describe = "Time taken to clone bundle state")]
     pub bundle_state_clone_duration: Histogram,

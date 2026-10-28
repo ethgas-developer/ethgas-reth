@@ -26,6 +26,7 @@ One page each, with parameters, payload shapes and worked examples.
 | [newFlashblocks](./newFlashblocks.md) | The pending block, on every new flashblock |
 | [newFlashblockTransactions](./newFlashblockTransactions.md) | Each transaction as it is sequenced |
 | [pendingLogs](./pendingLogs.md) | Logs from pre-confirmed transactions, one per message |
+| [newFlashblockBatches](./newFlashblockBatches.md) | Each flashblock's transactions and logs, in one message |
 
 For these methods and subscriptions used together with the standard ones, from reading the
 pre-confirmed block to waiting for the seal, see [Examples](../examples/README.md).

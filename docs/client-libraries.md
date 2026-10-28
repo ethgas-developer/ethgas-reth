@@ -69,8 +69,8 @@ block's last flashblock.
 
 ## Subscriptions
 
-- No library has a typed API for `newFlashblocks`, `newFlashblockTransactions` or `pendingLogs`:
-  send `eth_subscribe` yourself.
+- No library has a typed API for `newFlashblocks`, `newFlashblockTransactions`, `pendingLogs` or
+  `newFlashblockBatches`: send `eth_subscribe` yourself.
 - web3.py 7 cannot format the full form of `newFlashblockTransactions` and raises `TypeError`. Use
   the hashes form, or read the raw messages.
 - viem's `watchBlocks({ blockTag: "pending" })` emits once per block number, so it shows only the

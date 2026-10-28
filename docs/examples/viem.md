@@ -58,5 +58,10 @@ block 125 now has 228 transactions
 block 125 now has 254 transactions
 ```
 
-What the library does with this node's answers elsewhere is on
-[Client libraries](../client-libraries.md).
+**Waiting.** `waitForTransactionReceipt` returns the first receipt one of its fetches finds,
+pre-confirmed or sealed, and does not check `blockHash`. With `confirmations` of 2 or more it
+returns that first receipt after the seal.
+
+**Pending blocks.** `watchBlocks({ blockTag: "pending" })` does not follow flashblocks: over HTTP it
+shows one flashblock of each block, and over a WebSocket it ignores the tag and shows each sealed
+block. Subscribe to `newFlashblocks`, as the program does.

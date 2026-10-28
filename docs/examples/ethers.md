@@ -52,5 +52,11 @@ block 125 now has 127 transactions
 block 125 now has 151 transactions
 ```
 
-What the library does with this node's answers elsewhere is on
-[Client libraries](../client-libraries.md).
+**Quick sends.** The provider answers a request that repeats one from the last 250 ms from its own
+cache, so a second send within 250 ms gets the same `pending` nonce, and the node refuses it. Use
+ethers' `NonceManager`, or create the provider with `cacheTimeout: -1`. ethers reports several of
+the node's refusals, and every `eth_sendRawTransactionSync` error, as "could not coalesce error";
+the node's message is in `error.error`.
+
+**Waiting.** `tx.wait()` returns a pre-confirmed receipt when its first fetch finds one, and
+`provider.waitForTransaction(hash)` waits for the seal.

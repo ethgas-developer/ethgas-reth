@@ -81,11 +81,9 @@ when a transaction with the same nonce takes its place. Its receipt then changes
 `null`.
 
 Several clients treat any receipt as final: web3.py's `wait_for_transaction_receipt`, alloy's
-`get_receipt`, and the waits of ethers and viem when their first fetch finds a pre-confirmed
-receipt. viem's `waitForTransactionReceipt` with `confirmations` of 2 or more keeps the
-pre-confirmed receipt it fetched first. MetaMask takes a pre-confirmed `status: "0x0"` as a final
-failure, and leaves a warning on a transaction whose pre-confirmed receipt says `"0x1"`. See
-[Client libraries](../client-libraries.md).
+`get_receipt`, viem's `waitForTransactionReceipt`, and ethers' `tx.wait()` when its first fetch
+finds a pre-confirmed receipt. viem's `waitForTransactionReceipt` with `confirmations` of 2 or more
+keeps the pre-confirmed receipt it fetched first.
 
 ## Errors
 

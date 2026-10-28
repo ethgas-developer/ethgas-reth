@@ -7,7 +7,7 @@ from the environment; see [Before you start](./README.md#before-you-start).
 Tested with web3.py 7.16.0 (eth-account 0.14.0) on Python 3.14.7.
 
 web3.py has no method for `eth_sendRawTransactionSync`: `make_request` makes the call. web3.py 7
-cannot read the full form of `newFlashblockTransactions`, so the program streams hashes.
+and 8 cannot read the full form of `newFlashblockTransactions`, so the program streams hashes.
 
 ```python
 import asyncio
@@ -60,5 +60,9 @@ sequenced 0xf6961c0064d89653f0b064e5a1ad7b5cc957dad090bf33b1e73258e5ffb4e628
 sequenced 0xefdec4c010d08526abe10994667035dbe8283a840d49e4cc3422aeba415e1d2d
 ```
 
-What the library does with this node's answers elsewhere is on
-[Client libraries](../client-libraries.md).
+**Nonces and estimates.** `get_transaction_count(address)` and `estimate_gas` ask `latest` unless
+told otherwise, so they miss pre-confirmed transactions. Pass `"pending"`, as the program does for
+the nonce, and `block_identifier="pending"` to `estimate_gas`.
+
+**Waiting.** `wait_for_transaction_receipt` returns the pre-confirmed receipt, one flashblock after
+the send.

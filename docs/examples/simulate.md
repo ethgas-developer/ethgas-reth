@@ -18,8 +18,7 @@ rpc eth_estimateGas "[{\"from\": \"$TO\", \"to\": \"$FROM\", \"value\": \"0x1634
 ```
 
 So an approval that is pre-confirmed counts in the estimate of the swap after it. web3.py sends
-`latest` unless told otherwise; see [Client libraries](../client-libraries.md#gas-estimates) and
-[`eth_estimateGas`](../ethereum-json-rpc-api/eth_estimateGas.md).
+`latest` unless told otherwise; see [`eth_estimateGas`](../ethereum-json-rpc-api/eth_estimateGas.md).
 
 `eth_simulateV1` runs calls on top of the pre-confirmed state. Here, `increment()` (selector
 `0xd09de08a`), then `number()`:

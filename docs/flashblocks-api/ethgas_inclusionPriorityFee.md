@@ -84,8 +84,7 @@ The same number reaches three standard methods:
 - `eth_fillTransaction` uses it as the priority fee of a request that sets no fee, and twice the
   latest block's base fee plus it as the maximum fee.
 
-Wallets that estimate from `eth_feeHistory`, such as alloy's default estimator, or from their own
-fee service, such as MetaMask, do not see it.
+Clients that estimate from `eth_feeHistory`, such as alloy's default estimator, do not see it.
 
 A transaction that pays less than this fee still lands in the same block, in its last flashblock,
 because that flashblock admits every transaction. This is the price of the next flashblock, not

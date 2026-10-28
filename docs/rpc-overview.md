@@ -187,6 +187,4 @@ The node rejects the flashblocks of a block without a slot number.
 
 ## See also
 
-- [Client libraries](./client-libraries.md): what ethers, viem, web3.py, alloy and MetaMask do with
-  these answers
 - [Examples](./examples/README.md): the flashblocks-aware methods used together

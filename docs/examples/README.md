@@ -39,9 +39,6 @@ stream messages.
 | [web3.py 7](./web3py.md) | Python | `eth_sendRawTransactionSync`, through `make_request` | `newFlashblockTransactions`, hashes |
 | [alloy 2](./alloy.md) | Rust | `send_transaction_sync` | `newFlashblocks` |
 
-What these libraries do with this node's answers elsewhere is on
-[Client libraries](../client-libraries.md).
-
 ---
 
 ## Before you start

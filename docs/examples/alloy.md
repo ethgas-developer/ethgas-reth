@@ -81,5 +81,5 @@ block 126 now has 179 transactions
 block 126 now has 203 transactions
 ```
 
-What the library does with this node's answers elsewhere is on
-[Client libraries](../client-libraries.md).
+**Waiting.** `get_receipt()` returns any receipt a poll finds, the pre-confirmed one included, and
+`watch()` waits for the seal.

@@ -5,7 +5,7 @@ Streams each flashblock as one notification: the transactions it added, with the
 | | |
 |---|---|
 | Method | `eth_subscribe` |
-| Transport | **WebSocket only** |
+| Transport | **WebSocket or IPC** |
 | Parameters | none, or a log filter |
 
 Use it when you need to know that you have all of a flashblock.
@@ -130,10 +130,14 @@ flashblock.
 **`blockHash` is `null` on each transaction and `0x000…0` on each log**, as on the other flashblock
 subscriptions. Group by `blockNumber` and `flashblockIndex` instead.
 
-**A new subscription starts at the next flashblock.** To catch up after a reconnect, call
-[`eth_getLogs`](../ethereum-json-rpc-api/eth_getLogs.md) once with `fromBlock` and `toBlock` set to
-`"pending"`. It returns the logs of every flashblock in the pending block so far, and can include a
-flashblock you then also receive here. Deduplicate by `transactionHash` and `logIndex`.
+**A new subscription starts at the next flashblock.** To catch up after a reconnect, read the pending
+block once: [`eth_getBlockByNumber`](../ethereum-json-rpc-api/eth_getBlockByNumber.md) with
+`"pending"` and `true`, and [`eth_getBlockReceipts`](../ethereum-json-rpc-api/eth_getBlockReceipts.md)
+with `"pending"`. Together they hold every transaction of the pending block so far, with its receipt
+fields and logs, in block order; apply your filter to the logs yourself.
+[`eth_getLogs`](../ethereum-json-rpc-api/eth_getLogs.md) at `"pending"` returns only logs, so it misses
+every transaction without one. The read can include a flashblock you then also receive here.
+Deduplicate by the transaction `hash`.
 
 **Sequenced is not sealed.** A transaction here has been selected by the builder, not included in a
 confirmed block. Reconcile against the standard `logs` subscription, which fires on confirmed blocks.

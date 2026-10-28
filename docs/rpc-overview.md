@@ -105,7 +105,7 @@ with `--flashblocks-url`, on every enabled transport, whatever `--http.api` sele
 
 ### Subscriptions
 
-With `--flashblocks-url`, `eth_subscribe` takes three more subscription types, over WebSocket or
+With `--flashblocks-url`, `eth_subscribe` takes four more subscription types, over WebSocket or
 IPC. The standard types (`newHeads`, `logs`, `newPendingTransactions` and `syncing`) work as on
 reth.
 
@@ -114,6 +114,7 @@ reth.
 | [`newFlashblocks`](./flashblocks-api/newFlashblocks.md) | None | The pre-confirmed block, after a new flashblock |
 | [`pendingLogs`](./flashblocks-api/pendingLogs.md) | A log filter, optional | One log of the latest flashblock that matches the filter |
 | [`newFlashblockTransactions`](./flashblocks-api/newFlashblockTransactions.md) | `true`, a log filter, or none | One transaction of the latest flashblock: in full with its logs for `true`, in full when one of its logs matches for a filter, as a hash for none |
+| [`newFlashblockBatches`](./flashblocks-api/newFlashblockBatches.md) | A log filter, optional | The latest flashblock, once: every transaction it added, in full with its logs, or for a filter those with a matching log; also when none match |
 
 ### `relay` namespace
 

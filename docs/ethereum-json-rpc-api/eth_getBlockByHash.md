@@ -4,7 +4,7 @@ Returns a block by its hash.
 
 | | |
 |---|---|
-| Flashblocks `pending` | n/a — this method takes no block parameter |
+| At `pending` | No block parameter. The pre-confirmed block cannot be fetched by hash |
 
 ## Parameters
 
@@ -15,7 +15,7 @@ Returns a block by its hash.
 
 ## Returns
 
-`object | null` — a block object, or `null` if no such block exists. Same shape as `eth_getBlockByNumber`.
+`object | null`: a block object, or `null` if no such block exists. Same shape as `eth_getBlockByNumber`.
 
 ## Example
 
@@ -42,7 +42,7 @@ Returns a block by its hash.
     "parentHash": "0x8f2e6b1c9d4a7530e8b2f1c6a9d3e7b40c5f8a2d1e6b9c4f7a0d3e6b9c2f5a81",
     "timestamp": "0x68cf1a30",
     "gasLimit": "0x1c9c380",
-    "gasUsed": "0x2155bc7",
+    "gasUsed": "0x5208",
     "baseFeePerGas": "0x4c4b40",
     "transactions": ["0x03c8f106f18ad94190e763e21b584c5825b2f4c61f1274c0e8abe65b4476cd51"],
     "uncles": []
@@ -52,7 +52,4 @@ Returns a block by its hash.
 
 ## Behaviour at `pending` on this node
 
-This method takes a block **hash**, so the `pending` tag does not apply.
-
-It also cannot be used to fetch the pending block, because the pending block has no hash on this
-node — it is sealed with `0x000…0`.
+It cannot fetch the pre-confirmed block: that block's `hash` is `0x000…0`.

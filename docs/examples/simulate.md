@@ -17,8 +17,8 @@ rpc eth_estimateGas "[{\"from\": \"$TO\", \"to\": \"$FROM\", \"value\": \"0x1634
 { "jsonrpc": "2.0", "id": 1, "error": { "code": -32003, "message": "EVM error: OutOfFunds" } }
 ```
 
-So an approval that is pre-confirmed counts in the estimate of the swap after it. web3.py sends
-`latest` unless told otherwise; see [`eth_estimateGas`](../ethereum-json-rpc-api/eth_estimateGas.md).
+So an approval that is pre-confirmed counts in the estimate of the swap after it. See
+[`eth_estimateGas`](../ethereum-json-rpc-api/eth_estimateGas.md).
 
 `eth_simulateV1` runs calls on top of the pre-confirmed state. Here, `increment()` (selector
 `0xd09de08a`), then `number()`:
@@ -52,10 +52,8 @@ rpc eth_simulateV1 "[{\"blockStateCalls\": [{\"calls\": [
 ```
 
 The simulation started from the pending `number()` of 3, so it returns 4. The simulated block is
-numbered like the pending block, the latest plus one. Nothing is sent. Each simulated block takes
+numbered the latest block plus one. Nothing is sent. Each simulated block takes
 the block environment that follows the latest block, not the flashblock's; see
 [`eth_simulateV1`](../flashblocks-api/eth_simulateV1.md).
-
----
 
 Next: [Wait for the seal](./wait-for-the-seal.md).

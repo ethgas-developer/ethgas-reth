@@ -16,8 +16,12 @@ send one notification per transaction or per log, and nothing marks where a flas
 
 | Parameter | `transactions` holds |
 |---|---|
-| none | Every transaction the flashblock added |
+| none, `null`, `true` or `false` | Every transaction the flashblock added |
 | a log filter | The transactions where at least one log matches |
+| `{}` | The transactions that have at least one log |
+
+A filter's block fields are ignored; see
+[`eth_subscribe`](../ethereum-json-rpc-api/eth_subscribe.md#parameters).
 
 **Every transaction**
 
@@ -39,7 +43,7 @@ send one notification per transaction or per log, and nothing marks where a flas
   "params": [
     "newFlashblockBatches",
     {
-      "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
       "topics": ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"]
     }
   ],
@@ -76,24 +80,24 @@ transaction, flattened, plus `logs`, `logsBloom`, `gasUsed`, `cumulativeGasUsed`
       "flashblockIndex": "0x3",
       "transactions": [
         {
-          "hash": "0x7f4e2a8c1b6d9035e4a7c2f8b1d6e9a34c7f0b5d8e2a6c9f3b7d1e4a8c2f6b0c3",
+          "hash": "0x7f4e2a8c1b6d9035e4a7c2f8b1d6e9a34c7f0b5d8e2a6c9f3b7d1e4a8c2f6b0c",
           "blockHash": null,
           "blockNumber": "0x10f2c5",
           "blockTimestamp": "0x68cf1a3c",
           "transactionIndex": "0x7",
-          "from": "0xd3CdA913deB6f4967b2Ef66ae97DE114a83bcc01",
-          "to": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "from": "0xd3cda913deb6f4967b2ef66ae97de114a83bcc01",
+          "to": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
           "input": "0xa9059cbb...",
           "type": "0x2",
           "logs": [
             {
-              "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+              "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
               "topics": ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"],
               "data": "0x0000000000000000000000000000000000000000000000000de0b6b3a7640000",
               "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
               "blockNumber": "0x10f2c5",
               "blockTimestamp": "0x68cf1a3c",
-              "transactionHash": "0x7f4e2a8c1b6d9035e4a7c2f8b1d6e9a34c7f0b5d8e2a6c9f3b7d1e4a8c2f6b0c3",
+              "transactionHash": "0x7f4e2a8c1b6d9035e4a7c2f8b1d6e9a34c7f0b5d8e2a6c9f3b7d1e4a8c2f6b0c",
               "transactionIndex": "0x7",
               "logIndex": "0xc",
               "removed": false
@@ -120,9 +124,9 @@ wait for the next flashblock to know this one is done.
 **A gap in `flashblockIndex` within a block means you missed a flashblock**, for example because
 your client fell behind. See the limits below.
 
-**`flashblockIndex` back at `0x0` on the same `blockNumber` means the builder rebuilt the block.**
-This happens after a missed slot. Discard what you collected from the earlier build. Its
-transactions will not land as they were sequenced.
+**`flashblockIndex` back at `0x0` on the same `blockNumber` means the builder started the block
+again.** Discard what you collected from the earlier build: its transactions can land in another
+order, or not at all.
 
 **`transactionIndex` and `logIndex` count from the start of the block**, not from the start of the
 flashblock.
@@ -130,19 +134,19 @@ flashblock.
 **`blockHash` is `null` on each transaction and `0x000…0` on each log**, as on the other flashblock
 subscriptions. Group by `blockNumber` and `flashblockIndex` instead.
 
-**A new subscription starts at the next flashblock.** To catch up after a reconnect, read the pending
-block once: [`eth_getBlockByNumber`](../ethereum-json-rpc-api/eth_getBlockByNumber.md) with
-`"pending"` and `true`, and [`eth_getBlockReceipts`](../ethereum-json-rpc-api/eth_getBlockReceipts.md)
-with `"pending"`. Together they hold every transaction of the pending block so far, with its receipt
-fields and logs, in block order; apply your filter to the logs yourself.
+**A new subscription starts at the next flashblock.** To catch up after a reconnect, read the
+pre-confirmed block once:
+[`eth_getBlockByNumber`](../ethereum-json-rpc-api/eth_getBlockByNumber.md) with `"pending"` and
+`true`, and [`eth_getBlockReceipts`](../ethereum-json-rpc-api/eth_getBlockReceipts.md) with
+`"pending"`. Together they hold every transaction of the pre-confirmed block so far, with its
+receipt fields and logs, in block order; apply your filter to the logs yourself.
 [`eth_getLogs`](../ethereum-json-rpc-api/eth_getLogs.md) at `"pending"` returns only logs, so it misses
 every transaction without one. The read can include a flashblock you then also receive here.
 Deduplicate by the transaction `hash`.
 
-**Sequenced is not sealed.** A transaction here has been selected by the builder, not included in a
-confirmed block. Reconcile against the standard `logs` subscription, which fires on confirmed blocks.
+**Sequenced is not sealed.** A transaction here has been selected by the builder. It is not yet in
+a sealed block. To reconcile, follow `newHeads` and read each sealed block's receipts with
+`eth_getBlockReceipts`; the standard `logs` subscription misses every transaction without a log.
 
-**Limits.** One connection holds at most 4 `newFlashblocks` subscriptions and 32 of the other three
-kinds, a subscription whose client stops reading ends, and a subscriber that falls behind skips
-flashblocks. See
+**Limits**, and what the flashblocks subscriptions never signal:
 [`eth_subscribe`](../ethereum-json-rpc-api/eth_subscribe.md#limits).

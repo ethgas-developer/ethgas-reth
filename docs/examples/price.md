@@ -1,4 +1,4 @@
-# Price a transaction for the next flashblock
+# Price a transaction
 
 Example 2 of 7 in [Examples](./README.md). The commands use `rpc` and the variables of
 [Before you start](./README.md#before-you-start).
@@ -26,11 +26,10 @@ rpc eth_maxPriorityFeePerGas
 { "jsonrpc": "2.0", "id": 1, "result": "0x1ad27480" }
 ```
 
-The builder asks a priority fee of 0.45 gwei (`0x1ad27480` wei) to admit a transaction into the
-next flashblock. The price came in flashblock 2 of block 93, which arrived 789 ms before the call.
-`eth_maxPriorityFeePerGas` serves the same number, so a library that reads it pays the builder's
-price. A transaction that pays less still lands in the same block, in its last flashblock. When
-the builder sends no fee, `source` is `"fallback"` and the number is reth's own suggestion. See
+The builder's inclusion fee is 0.45 gwei (`0x1ad27480` wei). It came in flashblock 2 of block 93,
+which arrived 789 ms before the call. `eth_maxPriorityFeePerGas` serves the same number, so a
+library that reads it pays the builder's fee. When the node holds no current builder fee, `source`
+is `"fallback"` and the number is reth's own suggestion. See
 [`ethgas_inclusionPriorityFee`](../flashblocks-api/ethgas_inclusionPriorityFee.md).
 
 `eth_fillTransaction` fills a transaction around that fee:
@@ -63,7 +62,5 @@ The priority fee is the builder's. `maxFeePerGas` is twice the latest block's ba
 fee. The nonce is the `pending` transaction count, and the gas is estimated at `pending`. `raw`
 encodes `tx` with a zero signature: sign `tx`, then send it. See the `eth_fillTransaction` row
 of the [RPC overview](../rpc-overview.md#fees).
-
----
 
 Next: [Send a transaction and wait for its pre-confirmation](./send-and-wait.md).

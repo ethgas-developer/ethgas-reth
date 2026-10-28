@@ -52,6 +52,4 @@ block's environment. See [`eth_getBalance`](../ethereum-json-rpc-api/eth_getBala
 [`eth_getTransactionCount`](../ethereum-json-rpc-api/eth_getTransactionCount.md) and
 [`eth_call`](../ethereum-json-rpc-api/eth_call.md).
 
----
-
 Next: [Simulate at `pending`](./simulate.md).

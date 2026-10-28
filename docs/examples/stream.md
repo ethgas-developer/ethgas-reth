@@ -16,7 +16,8 @@ sub() {  # sub PARAMS: the subscription id, then two messages
 `-B 16777216` raises websocat's message limit from 64 KiB to 16 MiB: a `newFlashblocks` message
 carries the whole block, 249 KB for 303 transactions on the test network.
 
-**[`newFlashblocks`](../flashblocks-api/newFlashblocks.md)**, the pending block at each flashblock:
+**[`newFlashblocks`](../flashblocks-api/newFlashblocks.md)**, the pre-confirmed block at each
+flashblock:
 
 ```sh
 sub '["newFlashblocks"]'
@@ -28,8 +29,9 @@ sub '["newFlashblocks"]'
 {"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xa3c5541bf8f1558c1114ac15b5e4db8d","result":{"number":"0x5e","hash":"0x0000000000000000000000000000000000000000000000000000000000000000","gasUsed":"0x7c288a","transactions":[{"hash":"0xfecaea531a3a5b22537322f30349e934ed88e1634b05bc50597338c20c03b3bb","blockHash":null,"blockNumber":"0x5e","transactionIndex":"0x0"}]}}}
 ```
 
-Each message is the whole pending block with full transactions, not a delta: block `0x5e` held 151
-transactions in the first message and 178 in the next. Each transaction's `blockHash` is `null`.
+Each message is the whole pre-confirmed block with full transactions, not a delta: block `0x5e` held
+151 transactions in the first message and 178 in the next. Within a block, the count falls only
+when the builder starts the block again. Each transaction's `blockHash` is `null`.
 
 **[`pendingLogs`](../flashblocks-api/pendingLogs.md)**, with a filter on the ERC-20 `Transfer` topic:
 
@@ -44,7 +46,8 @@ sub '["pendingLogs", {"topics": ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4
 ```
 
 One log per message: here the two `Transfer` logs of one Uniswap swap. Every pre-confirmed log
-has `blockHash` `0x000…0`, so group logs by `transactionHash`.
+has `blockHash` `0x000…0`, so group logs by `transactionHash`. No message withdraws a log:
+`removed` is always `false`.
 
 **[`newFlashblockTransactions`](../flashblocks-api/newFlashblockTransactions.md)**, as hashes, then
 as full transactions:
@@ -63,16 +66,29 @@ sub '["newFlashblockTransactions", true]'
 ```
 
 The full form adds the receipt fields that flashblock execution knows: `logs`, `gasUsed`,
-`status`, `cumulativeGasUsed`, `contractAddress` and `logsBloom`. `blockHash` stays `null` until
-the block is sealed.
+`status`, `cumulativeGasUsed`, `contractAddress` and `logsBloom`. `blockHash` is `null`, and no
+message follows when the block is sealed.
 
-**Limits.** One connection holds at most 4 `newFlashblocks` subscriptions and 32 of the other three
-kinds. A subscription whose client stops reading ends after 10 s, without a message; one whose
-client reads more slowly than it sends can end the same way. A subscriber that falls 20
-flashblocks behind (4 s at the builder's 200 ms) skips them. See
+**[`newFlashblockBatches`](../flashblocks-api/newFlashblockBatches.md)**, each flashblock in one
+message:
+
+```sh
+sub '["newFlashblockBatches"]'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":"0x121098875f10cbe418b29fdc4146de80"}
+{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0x121098875f10cbe418b29fdc4146de80","result":{"blockNumber":"0x3b","flashblockIndex":"0x36","transactions":[{"hash":"0xa4beec032d67dddc12e71c10df14e04840ed349593062da776b9726c799b30c5","blockHash":null,"blockNumber":"0x3b","transactionIndex":"0x126","logs":[],"gasUsed":"0x5208","status":"0x1"}]}}}
+{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0x121098875f10cbe418b29fdc4146de80","result":{"blockNumber":"0x3b","flashblockIndex":"0x37","transactions":[{"hash":"0xf9639a443b79bc3ee98cbeb8a4a726c771ea618a6f2b279e0adf12065d99e3e0","blockHash":null,"blockNumber":"0x3b","transactionIndex":"0x12b","logs":[],"gasUsed":"0x5208","status":"0x1"}]}}}
+```
+
+One message per flashblock, also when the flashblock holds no transaction: here flashblocks `0x36`
+and `0x37` of block `0x3b`, with 5 and 4 transactions (one shown of each). The transactions carry the
+same fields as the full form of `newFlashblockTransactions`, and `transactionIndex` counts from the
+start of the block.
+
+**Limits**, and what the subscriptions never signal:
 [`eth_subscribe`](../ethereum-json-rpc-api/eth_subscribe.md#limits).
-
----
 
 Next: the same flows in a client library: [ethers](./ethers.md), [viem](./viem.md),
 [web3.py](./web3py.md) or [alloy](./alloy.md).

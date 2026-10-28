@@ -23,7 +23,8 @@ By default, reth builds `pending` from its mempool. This node never does.
 The node has a pre-confirmed block while it holds usable flashblocks for a block after the latest
 block. It has none when it runs without `--flashblocks-url`, while it syncs, before the builder
 sends the first flashblock of the next block, and after it
-[rejects a flashblock](#rejected-flashblocks).
+[rejects a flashblock](#rejected-flashblocks). After a restart the node counts as syncing until its
+consensus client makes a new block canonical.
 
 ## Methods
 
@@ -74,7 +75,10 @@ Methods this page does not list behave as on reth. The node does not serve `eth_
 | `eth_getBlockAccessListRaw`, `debug_getRawBlockAccessList` | **Latest** |
 
 The pre-confirmed block's `hash` is `0x000…0`, so
-[`eth_getBlockByHash`](./ethereum-json-rpc-api/eth_getBlockByHash.md) cannot fetch it.
+[`eth_getBlockByHash`](./ethereum-json-rpc-api/eth_getBlockByHash.md) cannot fetch it. Only the
+`pending` tag reads it: with the pre-confirmed block's number, the block lookups return `null`,
+`eth_getLogs` refuses the range with `-32602`, and the account-state and call methods return
+`-32001`.
 
 ### Transactions
 
@@ -100,7 +104,7 @@ serves the builder's inclusion fee.
 ### `ethgas` namespace
 
 [`ethgas_inclusionPriorityFee`](./flashblocks-api/ethgas_inclusionPriorityFee.md) returns the
-priority fee that clears the builder's inclusion gate, with its source and age. The node serves it
+builder's inclusion fee, with its source and age. The node serves it
 with `--flashblocks-url`, on every enabled transport, whatever `--http.api` selects.
 
 ### Subscriptions
@@ -113,15 +117,8 @@ reth.
 |---|---|---|
 | [`newFlashblocks`](./flashblocks-api/newFlashblocks.md) | None | The pre-confirmed block, after a new flashblock |
 | [`pendingLogs`](./flashblocks-api/pendingLogs.md) | A log filter, optional | One log of the latest flashblock that matches the filter |
-| [`newFlashblockTransactions`](./flashblocks-api/newFlashblockTransactions.md) | `true`, a log filter, or none | One transaction of the latest flashblock: in full with its logs for `true`, in full when one of its logs matches for a filter, as a hash for none |
+| [`newFlashblockTransactions`](./flashblocks-api/newFlashblockTransactions.md) | `true`, a log filter, or none | One transaction of the latest flashblock: in full with its logs for `true`, in full when one of its logs matches for a filter, as a hash for none or `false` |
 | [`newFlashblockBatches`](./flashblocks-api/newFlashblockBatches.md) | A log filter, optional | The latest flashblock, once: every transaction it added, in full with its logs, or for a filter those with a matching log; also when none match |
-
-### `relay` namespace
-
-With `--enable-simulator`, the node serves a relay's block simulation requests:
-`relay_validateBuilderSubmissionV1` to `relay_validateBuilderSubmissionV6`,
-`relay_validateMergedBuilderSubmissionV5` and `relay_inclusionList`. It serves them on every enabled
-transport, whatever `--http.api` selects.
 
 ## How the node builds the pre-confirmed block
 
@@ -152,7 +149,7 @@ after the Amsterdam fork a block without a slot number.
 
 The node never serves a rejected flashblock, or a later flashblock of the same block. It can keep
 the block's earlier flashblocks until the next flashblock arrives. After that, it has no
-pre-confirmed block until the first flashblock of the builder's next block.
+pre-confirmed block until the builder sends the first flashblock of a block.
 
 ## At a block boundary
 
@@ -165,8 +162,16 @@ lasts until the block is canonical.
 **The builder starts block N+1 before the node imports block N.** The pre-confirmed block is then
 N+1 on top of the flashblocks of N. Those flashblocks do not include the transactions the builder
 adds when it seals N, such as its payment to the fee recipient. Until the node imports N, state and
-calls at `pending` do not include those transactions. In this window, `eth_getLogs` from `pending`
-to `pending` returns the logs of both blocks.
+calls at `pending` do not include those transactions, and `BLOCKHASH(N)` reads 0. The block methods
+describe N+1 alone: its `number` is the latest block's plus 2, and its `parentHash` names N, which
+the node does not have yet. N's pre-confirmed transactions stay readable by hash. In this window,
+`eth_getLogs` from `pending` to `pending` returns the logs of both blocks.
+
+**The builder starts the block again.** When the first flashblock of a new payload arrives for the
+block the node holds, the node drops the flashblocks it held and builds the pre-confirmed block from
+the new one. A pre-confirmed transaction that the new build does not hold then has no receipt, and
+the `pending` nonce of its sender can fall back. The subscriptions stream the block again from its
+first flashblock, so transactions and logs can arrive a second time, with new indexes.
 
 **`pending` moves to a new block during a call.** A call at `pending` reads the block environment
 first and the state after. When `pending` moves to a new block between the two reads, the call runs

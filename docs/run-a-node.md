@@ -42,29 +42,12 @@ docker run -d --name ethgas-node \
 
 The node takes every reth `--engine.*` flag, as `reth node` does.
 
-## Run a local Amsterdam chain
-
-`just devnet` starts a single node that seals its own blocks, with no consensus client. It mines a
-block every 2 s and activates the Amsterdam fork 60 s after launch, so you can watch blocks change
-shape at the fork. Its genesis is [`devnet/amsterdam-genesis.json`](../devnet/amsterdam-genesis.json),
-stamped with the launch time. It funds the accounts of the mnemonic `test test test test test test
-test test test test test junk` and serves HTTP on port 8545.
-
-```bash
-just devnet
-just devnet ws://127.0.0.1:1111   # also follow a flashblocks producer
-```
-
-The recipe needs `jq`. Each run starts from an empty data directory under `target/devnet`. reth's
-local miner gives every Amsterdam block slot number 0, so a contract that reads `SLOTNUM` sees 0
-on this chain.
-
 ## Flashblocks flags
 
 | Flag | Description | Default |
 |---|---|---|
 | `--flashblocks-url <URL>` | WebSocket endpoint streaming flashblocks. Alias `--websocket-url`. Setting it enables the feature | _disabled_ |
-| `--max-pending-blocks-depth <N>` | Pending blocks held in memory | `3` |
+| `--max-pending-blocks-depth <N>` | How many blocks the canonical tip can move past the first block of the pre-confirmed state before the node drops that state | `3` |
 | `--flashblocks.ping-interval <DUR>` | Ping interval, and also the pong deadline. A dead feed is detected after at most two intervals. Requires `--flashblocks-url` | `2s` |
 | `--flashblocks.fee-max-age <DUR>` | How long the builder's inclusion fee is served after its flashblock arrived, and at most until its block is sealed, by `ethgas_inclusionPriorityFee`, `eth_maxPriorityFeePerGas`, `eth_gasPrice` and `eth_fillTransaction`. Requires `--flashblocks-url` | `15s` |
 | `--flashblocks.fee-ceiling <GWEI>` | The highest builder inclusion fee served, in gwei; a higher one gives way to the node's own suggestion. Requires `--flashblocks-url` | `1000` |
@@ -74,10 +57,14 @@ again from the next block that the producer starts after it is connected. Until 
 block in progress is sealed, `pending` resolves as it does
 [without flashblock data](./rpc-overview.md#pending-on-this-node).
 
+**After a restart**, the node uses no flashblock until its consensus client makes a new block
+canonical.
+
 **On a public endpoint**, size reth's `--rpc.max-connections` (500 by default) for clients that
-open connections and read nothing. The node ends such a client's flashblocks subscriptions after
-10 s, but the messages it has not read stay in the connection until it closes: a few MB for a
-connection whose subscriptions all sent their largest messages. reth sends no WebSocket
+open connections and read nothing. The node ends such a client's flashblocks subscriptions 10 s
+after its unread messages fill the connection's network buffers, but those messages stay in the
+connection until it closes: a few MB for a connection whose subscriptions all sent their largest
+messages. reth sends no WebSocket
 ping, so put the endpoint behind a proxy that closes idle connections.
 
 ## Flashblocks endpoints

@@ -18,9 +18,10 @@ futures = "0.3"
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
-`send_transaction_sync` calls `eth_sendRawTransactionSync`. alloy's default fee estimator reads
-`eth_feeHistory`, which does not carry the builder's price, so the program sets the priority fee
-from `eth_maxPriorityFeePerGas`. The pending block deserializes as an ordinary `Block`.
+`send_transaction_sync` calls `eth_sendRawTransactionSync` with no timeout, so the node waits up to
+its maximum, 30 s unless the operator sets it. alloy's default fee estimator reads
+`eth_feeHistory`, which does not carry the builder's fee, so the program sets the priority fee
+from `eth_maxPriorityFeePerGas`. The pre-confirmed block deserializes as an ordinary `Block`.
 
 ```rust
 use std::env;
@@ -81,5 +82,6 @@ block 126 now has 179 transactions
 block 126 now has 203 transactions
 ```
 
-**Waiting.** `get_receipt()` returns any receipt a poll finds, the pre-confirmed one included, and
-`watch()` waits for the seal.
+**Waiting.** `get_receipt()` returns any receipt a poll finds, the pre-confirmed one included.
+`watch()` also returns at once when a receipt exists, the pre-confirmed one included; it waits for
+a sealed block only when no receipt exists yet.

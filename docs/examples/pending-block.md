@@ -31,13 +31,14 @@ rpc eth_getBlockByNumber '["pending", false]'
 }
 ```
 
-`pending` is the block the builder is assembling: its `number` is the latest block's plus one, and
-its `parentHash` is the latest block's hash. Its `hash` is `0x000…0` because the block is not
-sealed; do not pass it to `eth_getBlockByHash`. `transactions` held 176 hashes here, and the list
-grows with each flashblock until the block is sealed. Without flashblock data, `pending` is a block
-the node executed, never one assembled from its mempool. See
+`pending` is the block the builder is assembling: its `number` is usually the latest block's plus
+one, and its `parentHash` the latest block's hash. When the builder starts the next block before
+this node imports the one before it, `pending` is two blocks ahead of `latest`, and its
+`parentHash` names a block this node does not have yet; see
+[At a block boundary](../rpc-overview.md#at-a-block-boundary). Its `hash` is `0x000…0` because the
+block is not sealed; do not pass it to `eth_getBlockByHash`. `transactions` held 176 hashes here,
+and the list grows with each flashblock until the block is sealed. Without flashblock data,
+`pending` is a block the node executed, never one assembled from its mempool. See
 [`eth_getBlockByNumber`](../ethereum-json-rpc-api/eth_getBlockByNumber.md).
 
----
-
-Next: [Price a transaction for the next flashblock](./price.md).
+Next: [Price a transaction](./price.md).

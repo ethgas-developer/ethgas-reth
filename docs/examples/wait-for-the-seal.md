@@ -4,10 +4,13 @@ Example 6 of 7 in [Examples](./README.md). The commands use `rpc` and the variab
 [Before you start](./README.md#before-you-start). `HASH` is the second transaction of
 [Send a transaction and wait for its pre-confirmation](./send-and-wait.md).
 
-Poll the receipt until its `blockHash` is non-zero:
+Poll the receipt until its `blockHash` is non-zero, for at most 30 s:
 
 ```sh
-until rpc eth_getTransactionReceipt "[\"$HASH\"]" | jq -e '.result.blockHash | test("[1-9a-f]")' > /dev/null; do sleep 1; done
+for i in $(seq 30); do
+  rpc eth_getTransactionReceipt "[\"$HASH\"]" | jq -e '.result.blockHash // "" | test("[1-9a-f]")' > /dev/null && break
+  sleep 1
+done
 rpc eth_getTransactionReceipt "[\"$HASH\"]"
 ```
 
@@ -29,6 +32,8 @@ rpc eth_getTransactionReceipt "[\"$HASH\"]"
 The poll waited 8 s. The same builder sealed block `0x5d`, so the receipt kept its block number
 and index, and gained the block's hash. A receipt with a non-zero `blockHash` is in a sealed block.
 
----
+If the loop ends with a `null` receipt, or one still pre-confirmed, the transaction was not sealed
+where it was pre-confirmed. See
+[`eth_getTransactionReceipt`](../ethereum-json-rpc-api/eth_getTransactionReceipt.md#behaviour-at-pending-on-this-node).
 
 Next: [Stream flashblocks](./stream.md).

@@ -66,3 +66,6 @@ the nonce, and `block_identifier="pending"` to `estimate_gas`.
 
 **Waiting.** `wait_for_transaction_receipt` returns the pre-confirmed receipt, one flashblock after
 the send.
+
+**Errors.** `make_request` returns an error answer as a dict, for example code `4` after a
+timeout, and raises nothing; `["result"]` then raises `KeyError`. Check for `"error"` first.

@@ -4,36 +4,50 @@ Opens a real-time subscription over a WebSocket or IPC connection. Returns a sub
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Yes** — flashblock subscriptions are available here |
+| Transport | WebSocket or IPC. Over HTTP the call fails with `-32603` |
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| `subscriptionType` | string | yes | The event type. See the table below |
+| `subscriptionType` | string | yes | The event type. See the tables below |
 | `params` | object \| boolean | no | Filter or mode, interpreted per subscription type |
 
-**Standard types:**
+**Standard types**, as on reth:
 
 | Type | Fires with |
 |---|---|
-| `newHeads` | Each new confirmed block header |
-| `logs` | Logs matching a filter |
-| `newPendingTransactions` | Transaction hashes entering the pool |
+| `newHeads` | Each new sealed block header, once the block is canonical |
+| `logs` | Logs of sealed blocks that match a filter |
+| `newPendingTransactions` | Hashes of transactions that enter this node's pending pool and may be propagated; full transactions with `true` |
 | `syncing` | Sync status changes |
 
-**Flashblocks types**, available when the node is connected to a flashblocks feed:
+**Flashblocks types**, available when the node runs with `--flashblocks-url`, whether or not its
+feed is connected:
 
 | Type | Parameter | Fires with |
 |---|---|---|
-| `newFlashblocks` | none | The current pending block, on every new flashblock |
-| `pendingLogs` | a log filter | Logs from the latest flashblock matching the filter |
+| `newFlashblocks` | none | The pre-confirmed block, on every new flashblock |
+| `pendingLogs` | a log filter, or none | Logs from the latest flashblock that match the filter |
 | `newFlashblockTransactions` | `true`, a log filter, or none | Transactions from the latest flashblock |
 | `newFlashblockBatches` | a log filter, or none | The latest flashblock's transactions and logs, in one notification |
 
+The parameter forms:
+
+| Parameter | `pendingLogs` | `newFlashblockTransactions` | `newFlashblockBatches` |
+|---|---|---|---|
+| none, `null` or `false` | Every log | Hashes | Every transaction |
+| `true` | Every log | Full transactions | Every transaction |
+| `{}` | Every log | Full transactions that have at least one log | Transactions that have at least one log |
+| a log filter | Logs that match | Full transactions with a matching log | Transactions with a matching log, each with all its logs |
+
+A filter's `fromBlock`, `toBlock` and `blockHash` are accepted and ignored. An unknown subscription
+type, a malformed parameter, an unknown filter key, more than four topic positions, or a
+`blockHash` together with a block range get `-32602`.
+
 ## Returns
 
-`string` — the subscription ID, hex-encoded.
+`string`: the subscription ID, hex-encoded.
 
 ## Example
 
@@ -60,47 +74,42 @@ Opens a real-time subscription over a WebSocket or IPC connection. Returns a sub
 
 ## Behaviour at `pending` on this node
 
-Subscriptions need a WebSocket or IPC connection. They cannot be served over HTTP.
+Each flashblocks type has its own page with its message shape:
+[`newFlashblocks`](../flashblocks-api/newFlashblocks.md),
+[`pendingLogs`](../flashblocks-api/pendingLogs.md),
+[`newFlashblockTransactions`](../flashblocks-api/newFlashblockTransactions.md) and
+[`newFlashblockBatches`](../flashblocks-api/newFlashblockBatches.md).
 
-`newFlashblockTransactions` takes three parameter forms:
-
-- `true` — the full transaction plus the receipt fields flashblock execution already knows
-- a log filter — the same payload, but only for transactions where a log matches
-- no parameter — transaction hashes only
-
-The full form flattens the transaction object and adds these fields, each serialized exactly as
-`eth_getTransactionReceipt` serializes it:
-
-| Field | Type | Notes |
-|---|---|---|
-| `logs` | array | Logs emitted by this transaction |
-| `logsBloom` | `Bloom` | Bloom over `logs` |
-| `gasUsed` | hex quantity | Gas this transaction alone consumed |
-| `cumulativeGasUsed` | hex quantity | Gas used by the block up to and including this transaction |
-| `status` | hex quantity | `0x1` or `0x0`, flattened from the EIP-658 value |
-| `contractAddress` | address \| null | Set only when this transaction deployed a contract |
-
-Because the transaction object is flattened in, the payload carries `blockHash: null` for a
-pre-confirmed transaction, exactly as
-[`eth_getTransactionByHash`](./eth_getTransactionByHash.md) does.
-
-`newHeads` fires on confirmed blocks only. It does **not** fire per flashblock. To follow the
-pre-confirmed head, use `newFlashblocks`.
+`newHeads` fires on sealed blocks only. It does **not** fire per flashblock. To follow the
+pre-confirmed block, use `newFlashblocks`.
 
 ## Limits
 
 - One connection holds at most 4 `newFlashblocks` subscriptions, and at most 32 `pendingLogs`,
   `newFlashblockTransactions` and `newFlashblockBatches` subscriptions together. A further one is
-  refused with `-32006`.
-- A connection keeps the messages its client has not read until it closes. Size
-  `--rpc.max-connections` for that on a public endpoint; see [Run a node](../run-a-node.md#flashblocks-flags).
-- `newFlashblocks` sends a block only once the one before has gone out to the client, and skips
-  the updates in between; each one is the whole block, so the next one sent carries everything.
-- A flashblocks subscription whose client stops reading ends after 10 s, without a message. A
-  client that reads more slowly than its subscription sends can lose it the same way, once the
-  messages it has not read fill the connection's network buffers. `eth_unsubscribe` answers
-  `false` for an ended subscription.
-- A subscriber that falls 20 flashblocks behind (4 s at the builder's 200 ms) skips them without
-  notice. `pendingLogs`, `newFlashblockTransactions` and `newFlashblockBatches` then miss those
-  flashblocks' logs and transactions; reconcile with `eth_getBlockByNumber("pending", true)` or
-  with the sealed blocks.
+  refused with `-32006` and the message `too many newFlashblocks subscriptions on this connection:
+  max 4`, or `too many pendingLogs, newFlashblockTransactions and newFlashblockBatches subscriptions
+  on this connection: max 32`.
+- `newFlashblocks` sends a block only once the one before has left the node's send buffer, and
+  drops the updates in between. A dropped update is never sent later. When it was a block's last
+  update, the final state of that block never arrives, and the next message is the next block.
+- A flashblocks subscription ends without a message 10 s after the messages its client has not
+  read fill the connection's network buffers (several MB). On the devnet, one `newFlashblockBatches`
+  subscription (about 65 KB/s) ended about 61 s after its client stopped reading. A client that
+  reads more slowly than its subscription sends can lose it the same way. `eth_unsubscribe`
+  answers `false` for an ended subscription.
+- A `pendingLogs`, `newFlashblockTransactions` or `newFlashblockBatches` subscriber that falls more
+  than 32 flashblocks behind (6.4 s at the builder's 200 ms) skips the oldest without notice. To
+  read what it missed, call `eth_getBlockByNumber("pending", true)` and
+  `eth_getBlockReceipts("pending")`, or read the sealed blocks.
+
+## What the flashblocks subscriptions never signal
+
+- **The seal.** No flashblocks subscription sends a message when the node imports the sealed
+  block. Follow `newHeads`, then read the sealed block's receipts.
+- **A retraction.** `removed` is always `false`. A pre-confirmed transaction that does not land is
+  never withdrawn from a stream.
+- **A feed fault.** When the node rejects a flashblock, or its feed loses one, the subscriptions
+  send nothing more for that block. They go on at the next first flashblock that the builder sends.
+- **A rebuild.** When the builder starts the block again, the subscriptions stream it again from
+  its first flashblock. See [At a block boundary](../rpc-overview.md#at-a-block-boundary).

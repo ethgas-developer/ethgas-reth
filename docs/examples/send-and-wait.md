@@ -3,7 +3,7 @@
 Example 3 of 7 in [Examples](./README.md). The commands use `rpc` and the variables of
 [Before you start](./README.md#before-you-start).
 
-`eth_sendRawTransactionSync` answers once the transaction is in a flashblock:
+`eth_sendRawTransactionSync` answers once a flashblock or a sealed block holds the transaction:
 
 ```sh
 TIP=$(rpc eth_maxPriorityFeePerGas | jq -r .result | cast to-dec)
@@ -35,10 +35,10 @@ rpc eth_sendRawTransactionSync "[\"$RAW\", 5000]"
 ```
 
 The four commands took 0.2 s. The receipt is pre-confirmed: `blockHash` is `0x000…0` and
-`blockNumber` is the pending block. `5000` is the wait in milliseconds; the node clamps it to its
-maximum, 30 s unless the operator sets it, and a timeout is error code `4`. The transaction pays
-the builder's price, so it can enter the next flashblock. `cast mktx` takes its nonce from
-`latest`, which leaves out pre-confirmed transactions, so the commands pass the `pending` count.
+`blockNumber` is the pre-confirmed block's. `5000` is the wait in milliseconds; the node clamps it
+to its maximum, 30 s unless the operator sets it, and a timeout is error code `4`. `cast mktx` takes
+its nonce from `latest`, which leaves out pre-confirmed transactions, so the commands pass the
+`pending` count.
 `cast to-dec` converts the node's hex answers: `cast mktx` refuses a hex priority fee. See
 [`eth_sendRawTransactionSync`](../flashblocks-api/eth_sendRawTransactionSync.md).
 
@@ -78,11 +78,9 @@ The `pending` count already included the transfer above, so the second transacti
 nonce. Its receipt came about 0.2 s after the send, with `blockHash` `0x000…0`: it is pre-confirmed,
 not sealed. **A pre-confirmed receipt can still change or vanish.** If another builder's block wins
 the slot, the transaction is sealed at another position, possibly with another status, or not at
-all. See [`eth_getTransactionReceipt`](../ethereum-json-rpc-api/eth_getTransactionReceipt.md#behaviour-at-pending-on-this-node).
+all. The receipt also vanishes when the builder starts the block again without the transaction. See [`eth_getTransactionReceipt`](../ethereum-json-rpc-api/eth_getTransactionReceipt.md#behaviour-at-pending-on-this-node).
 
 Run the next two examples at once: they read what these two transactions left, which differs from
 `latest` only until the block is sealed, within about one slot (12 s).
-
----
 
 Next: [Read the state that pre-confirmed transactions left](./pending-state.md).

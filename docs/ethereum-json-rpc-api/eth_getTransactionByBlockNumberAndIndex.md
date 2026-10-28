@@ -4,7 +4,7 @@ Returns the transaction at a given index within the block with the given number 
 
 | | |
 |---|---|
-| Flashblocks `pending` | **Yes** — `pending` returns a transaction of the flashblock being built |
+| At `pending` | **Pre-confirmed** |
 
 ## Parameters
 
@@ -15,7 +15,7 @@ Returns the transaction at a given index within the block with the given number 
 
 ## Returns
 
-`object | null` — a transaction object, or `null` if not found.
+`object | null`: a transaction object, or `null` if not found.
 
 ## Example
 
@@ -41,8 +41,8 @@ Returns the transaction at a given index within the block with the given number 
     "blockHash": "0x5c330e55a190f82ea486b61e5b12e27dfb4fb3cecfc5746886ef38ca1281bce8",
     "blockNumber": "0x10f2c4",
     "transactionIndex": "0x0",
-    "from": "0xd3CdA913deB6f4967b2Ef66ae97DE114a83bcc01",
-    "to": "0x742d35Cc6634C0532925a3b8D4C9dD0b4f3BaEa",
+    "from": "0xd3cda913deb6f4967b2ef66ae97de114a83bcc01",
+    "to": "0x742d35cc6634c0532925a3b8d4c9dd0b4f3baea1",
     "value": "0x2c68af0bb14000",
     "gas": "0x5208",
     "maxFeePerGas": "0x4c4b40",
@@ -57,11 +57,12 @@ Returns the transaction at a given index within the block with the given number 
 
 ## Behaviour at `pending` on this node
 
-`pending` returns the transaction at that index in the flashblock being built: the transaction
+`pending` returns the transaction at that index in the pre-confirmed block, counted from the
+block's first transaction: the transaction
 that `eth_getBlockByNumber("pending", true)` lists at that index. Every index below the count that
 `eth_getBlockTransactionCountByNumber("pending")` reports is retrievable.
 
 A pre-confirmed transaction has `blockHash: null` and a real `blockNumber` and `transactionIndex`.
 
 Without flashblock data, `pending` indexes the next block when the node has already executed it
-for its consensus client, else the latest confirmed block.
+for its consensus client, else the latest block.

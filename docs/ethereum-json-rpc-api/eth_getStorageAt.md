@@ -48,6 +48,3 @@ the same as `eth_getCode`. The value comes from the node's own execution of the 
 transactions on top of the latest confirmed block.
 
 A slot written only by a transaction in the node's mempool is never visible at `pending`.
-
-To prove a slot value, use `eth_getProof` at `latest` or at a block number. It refuses `pending`,
-because pre-confirmed state has no state root.

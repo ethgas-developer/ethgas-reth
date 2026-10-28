@@ -72,7 +72,7 @@ on this chain.
 **When the feed drops**, the node tries to connect again, at most 2 s apart, and serves flashblocks
 again from the next block that the producer starts after it is connected. Until then, once the
 block in progress is sealed, `pending` resolves as it does
-[without flashblock data](./rpc-overview.md#what-pending-means-on-this-node).
+[without flashblock data](./rpc-overview.md#pending-on-this-node).
 
 **On a public endpoint**, size reth's `--rpc.max-connections` (500 by default) for clients that
 open connections and read nothing. The node ends such a client's flashblocks subscriptions after

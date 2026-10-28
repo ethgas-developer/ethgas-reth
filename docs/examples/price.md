@@ -62,7 +62,7 @@ rpc eth_fillTransaction "[{\"from\": \"$FROM\", \"to\": \"$TO\", \"value\": \"0x
 The priority fee is the builder's. `maxFeePerGas` is twice the latest block's base fee plus that
 fee. The nonce is the `pending` transaction count, and the gas is estimated at `pending`. `raw`
 encodes `tx` with a zero signature: sign `tx`, then send it. See the `eth_fillTransaction` row
-of the [RPC overview](../rpc-overview.md#ethereum-json-rpc-api).
+of the [RPC overview](../rpc-overview.md#fees).
 
 ---
 

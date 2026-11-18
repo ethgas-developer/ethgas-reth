@@ -23,9 +23,11 @@ reth-node-ethereum.workspace = true
 reth-evm-ethereum.workspace = true
 reth-primitives-traits.workspace = true
 reth-exex.workspace = true
-reth-revm.workspace = true
 reth-tasks.workspace = true
 reth-network-p2p.workspace = true
+
+# evm2
+evm2.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
@@ -40,6 +42,7 @@ alloy-genesis.workspace = true
 alloy-rpc-client.workspace = true
 alloy-serde.workspace = true
 alloy-network.workspace = true
+alloy-sol-types.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -83,7 +86,6 @@ reth-node-api.workspace = true
 reth-node-core.workspace = true
 reth-tasks.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
-alloy-sol-types = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

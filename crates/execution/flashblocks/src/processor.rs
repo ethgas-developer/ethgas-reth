@@ -20,17 +20,17 @@ use alloy_primitives::{Address, B256, BlockNumber, map::foldhash::HashMap};
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::Log;
 use arc_swap::ArcSwapOption;
+use evm2::{block::BundleSource, interpreter::Word};
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
 use reth_ethereum_primitives::{Block, TransactionSigned};
-use reth_evm::{ConfigureEvm, Evm, NextBlockEnvAttributes, block::SystemCaller};
-use reth_evm_ethereum::EthEvmConfig;
+use reth_evm::{
+    BlockExecutionError, BlockExecutor, BlockExecutorFactory, ConfigureEvm, NextBlockEnvAttributes,
+    database::StateProviderDatabase,
+};
+use reth_evm_ethereum::{EthBlockExecutionCtx, EthEvmConfig};
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProvider, StateProviderFactory};
-use reth_revm::{
-    DatabaseCommit, State, context::result::ResultAndState, database::StateProviderDatabase,
-    db::states::bundle_state::BundleRetention,
-};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::receipt::build_receipt;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
@@ -644,23 +644,19 @@ where
         let state_provider = self
             .client
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
-            .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
-        let state_provider_db =
-            StateProviderDatabase::new(state_provider.into_evm_state_provider());
+            .map_err(|e| ProviderError::StateProvider(e.to_string()))?
+            .into_evm_state_provider();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
-        // Track state changes across flashblocks, accumulating bundle state
-        // from previous pending blocks if available.
-        let mut db = match &prev_pending_blocks {
-            Some(pending_blocks) => State::builder()
-                .with_database(state_provider_db)
-                .with_bundle_update()
-                .with_bundle_prestate(pending_blocks.get_bundle_state())
-                .build(),
-            None => State::builder().with_database(state_provider_db).with_bundle_update().build(),
-        };
+        // State changes since the anchor: the previous snapshot's, extended by each block as it
+        // executes. Every block executes on top of it.
+        let mut bundle = prev_pending_blocks
+            .as_ref()
+            .map(|pending_blocks| pending_blocks.get_bundle_state())
+            .unwrap_or_default();
 
         let mut sender_recovery = Duration::ZERO;
+        let mut pending_parent_hashes = Vec::new();
 
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
@@ -705,29 +701,39 @@ where
                 slot_number: header.slot_number,
             };
 
-            // A cache miss falls through to the provider, which only knows canonical blocks, so
-            // a pending parent is unresolvable without this. Separate from the EIP-2935 ring
-            // buffer written below; both are needed.
-            db.block_hashes.insert(base.block_number - 1, base.parent_hash);
-
             let evm_env = evm_config
                 .next_evm_env(&last_block_header, &block_env_attributes)
                 .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
-            let mut evm = evm_config.evm_with_env(db, evm_env);
+            let mut evm =
+                evm_config.evm_with_env(StateProviderDatabase::new(&state_provider), evm_env);
+            evm.overlay_db_mut().commit_source(&BundleSource(&bundle));
+            // A cache miss falls through to the provider, which only knows canonical blocks, so
+            // a pending parent is unresolvable without this. Separate from the EIP-2935 ring
+            // buffer written below; both are needed.
+            pending_parent_hashes.push((Word::from(base.block_number - 1), base.parent_hash));
+            for (number, hash) in &pending_parent_hashes {
+                evm.overlay_db_mut().insert_block_hash(number, hash);
+            }
 
-            // Apply EIP-4788 (beacon root) and EIP-2935 (blockhashes) pre-execution
-            // system calls so cached execution matches what the validator computes.
             // From the second iteration on, `last_block_header` is the header this loop assembled
             // a moment ago, whose hash matches no real block. The wire value is authoritative, and
             // is what the assembled header declares as its own parent.
-            let parent_hash = base.parent_hash;
-            let mut system_caller = SystemCaller::new(self.chain_spec.clone());
-            system_caller
-                .apply_blockhashes_contract_call(parent_hash, &mut evm)
-                .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
-            system_caller
-                .apply_beacon_root_contract_call(Some(base.parent_beacon_block_root), &mut evm)
-                .map_err(|e| crate::error::ExecutionError::EvmEnv(e.to_string()))?;
+            let ctx = EthBlockExecutionCtx {
+                tx_count_hint: Some(block.body.transactions.len()),
+                parent_hash: base.parent_hash,
+                parent_beacon_block_root: block_env_attributes.parent_beacon_block_root,
+                ommers: &[],
+                withdrawals: None,
+                extra_data: block_env_attributes.extra_data,
+                slot_number: block_env_attributes.slot_number,
+            };
+            let mut executor = evm_config.block_executor_factory().create_executor(evm, ctx);
+
+            // Apply EIP-4788 (beacon root) and EIP-2935 (blockhashes) pre-execution
+            // system calls so cached execution matches what the validator computes.
+            executor
+                .apply_pre_execution_changes()
+                .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
             let recovery_started = Instant::now();
             let senders = Self::recover_senders(&block.body.transactions, |tx_hash| {
@@ -759,8 +765,8 @@ where
                         }
                     })?;
 
-                let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
-                let envelope = recovered_transaction.clone().convert::<TxEnvelope>();
+                let envelope =
+                    Recovered::new_unchecked(transaction.clone(), sender).convert::<TxEnvelope>();
 
                 let effective_gas_price = block
                     .base_fee_per_gas
@@ -847,16 +853,22 @@ where
                 }
 
                 if should_execute_transaction {
-                    let ResultAndState { result, state } = evm
-                        .transact(recovered_transaction)
-                        .map_err(|e| crate::error::ExecutionError::TransactionFailed {
+                    let transaction_failed =
+                        |e: BlockExecutionError| ExecutionError::TransactionFailed {
                             tx_hash: *transaction.tx_hash(),
                             sender,
                             reason: e.to_string(),
-                        })?;
+                        };
+                    let output = executor
+                        .execute_transaction_without_commit(Recovered::new_unchecked(
+                            transaction,
+                            sender,
+                        ))
+                        .map_err(transaction_failed)?;
+                    let executed = output.result();
                     // Pending serves the producer's receipt beside this node's state. When the
                     // two executions disagree on the outcome, neither story is served.
-                    if result.is_success() != receipt.status() {
+                    if executed.result.status != receipt.status() {
                         self.metrics.transaction_status_mismatch.increment(1);
                         warn!(
                             message = "flashblock transaction result differs from the producer's receipt",
@@ -864,7 +876,9 @@ where
                             tx_hash = %transaction.tx_hash(),
                             producer_success = receipt.status(),
                             producer_gas_used = tx_gas_used,
-                            %result,
+                            node_gas_used = executed.result.tx_gas_used(),
+                            node_stop = ?executed.result.stop,
+                            node_output = %executed.result.output,
                         );
                         return Err(ExecutionError::StatusMismatch {
                             tx_hash: *transaction.tx_hash(),
@@ -872,9 +886,11 @@ where
                         }
                         .into());
                     }
-                    pending_blocks_builder
-                        .with_transaction_state(*transaction.tx_hash(), state.clone());
-                    evm.db_mut().commit(state);
+                    pending_blocks_builder.with_transaction_state(
+                        *transaction.tx_hash(),
+                        executed.pending_state.clone(),
+                    );
+                    executor.commit_transaction(output).map_err(transaction_failed)?;
                 }
             }
 
@@ -882,15 +898,13 @@ where
                 pending_blocks_builder.with_account_balance(address, balance);
             }
 
-            db = evm.into_db();
+            bundle.extend(executor.into_state());
             last_block_header = block.header.clone();
         }
 
         self.metrics.sender_recovery_duration.record(sender_recovery.as_secs_f64());
 
-        // Extract the accumulated bundle state.
-        db.merge_transitions(BundleRetention::Reverts);
-        pending_blocks_builder.with_bundle_state(db.take_bundle());
+        pending_blocks_builder.with_bundle_state(bundle);
         pending_blocks_builder.with_anchor(anchor);
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }

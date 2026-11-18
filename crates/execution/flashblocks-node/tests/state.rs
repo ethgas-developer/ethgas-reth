@@ -21,13 +21,14 @@ mod tests {
             ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashBlock, Metadata,
         },
     };
+    use evm2::evm::AccountInfo;
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
     use reth_chainspec::{ChainSpec, EthChainSpec, EthereumHardforks};
     use reth_db::{DatabaseEnv, test_utils::TempDatabase};
+    use reth_evm::database::StateProviderDatabase;
     use reth_network_p2p::sync::NoopSyncStateUpdater;
     use reth_node_api::NodeTypesWithDBAdapter;
     use reth_provider::{AccountReader, BlockNumReader, BlockReader};
-    use reth_revm::{database::StateProviderDatabase, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use reth_trie_common::{
         HashedPostState, KeccakKeyHasher, SortedTrieData, updates::TrieUpdates,

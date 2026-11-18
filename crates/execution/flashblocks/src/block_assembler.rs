@@ -5,13 +5,18 @@
 
 use std::collections::HashMap;
 
-use alloy_consensus::Header;
-use alloy_eips::{eip6110::DEPOSIT_REQUEST_TYPE, eip7685::Requests};
-use alloy_primitives::{B256, Bytes, Sealed};
+use alloy_consensus::{Header, TxReceipt};
+use alloy_eips::{
+    eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS},
+    eip7685::Requests,
+};
+use alloy_hardforks::EthereumHardforks;
+use alloy_primitives::{Address, B256, Bytes, Sealed};
 use alloy_rpc_types::Withdrawal;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_sol_types::{SolEvent, sol};
+use reth_chainspec::EthChainSpec;
 use reth_ethereum_primitives::{Block, Receipt};
-use reth_evm::eth::{eip6110::parse_deposits_from_receipts, spec::EthExecutorSpec};
 use tracing::warn;
 
 use crate::{
@@ -60,7 +65,7 @@ impl BlockAssembler {
     ///   wire
     /// - Block conversion fails
     pub fn assemble(
-        spec: &impl EthExecutorSpec,
+        spec: &(impl EthChainSpec + EthereumHardforks),
         flashblocks: &[FlashBlock],
     ) -> Result<AssembledBlock> {
         let first = flashblocks.first().ok_or(ProtocolError::EmptyFlashblocks)?;
@@ -140,7 +145,7 @@ impl BlockAssembler {
     /// come from system calls made after the last transaction, so a block carrying one then gets a
     /// confidently wrong hash.
     fn requests_hash(
-        spec: &impl EthExecutorSpec,
+        spec: &(impl EthChainSpec + EthereumHardforks),
         block: &Block,
         flashblocks: &[FlashBlock],
     ) -> Result<Option<B256>> {
@@ -171,14 +176,50 @@ impl BlockAssembler {
             })
             .collect::<std::result::Result<Vec<&Receipt>, _>>()?;
 
-        let deposits = parse_deposits_from_receipts(spec, ordered)
-            .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
+        let deposit_contract = spec
+            .deposit_contract()
+            .map_or(MAINNET_DEPOSIT_CONTRACT_ADDRESS, |deposit_contract| deposit_contract.address);
+        let deposits = deposit_requests(deposit_contract, ordered)?;
 
         let mut requests = Requests::default();
         // Skips the type entirely when there are no deposits, leaving the empty-requests hash.
         requests.push_request_with_type(DEPOSIT_REQUEST_TYPE, deposits.iter().copied());
         Ok(Some(requests.requests_hash()))
     }
+}
+
+sol! {
+    /// The deposit contract's event, one per EIP-6110 deposit.
+    event DepositEvent(
+        bytes pubkey,
+        bytes withdrawal_credentials,
+        bytes amount,
+        bytes signature,
+        bytes index
+    );
+}
+
+/// Concatenates the deposit requests that `deposit_contract` logged in `receipts`, in their order.
+fn deposit_requests<'a>(
+    deposit_contract: Address,
+    receipts: impl IntoIterator<Item = &'a Receipt>,
+) -> Result<Vec<u8>> {
+    let mut requests = Vec::new();
+    for log in receipts.into_iter().flat_map(|receipt| receipt.logs()) {
+        if log.address != deposit_contract ||
+            log.topics().first() != Some(&DepositEvent::SIGNATURE_HASH)
+        {
+            continue;
+        }
+        let deposit = DepositEvent::decode_log(log)
+            .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
+        requests.extend_from_slice(&deposit.pubkey);
+        requests.extend_from_slice(&deposit.withdrawal_credentials);
+        requests.extend_from_slice(&deposit.amount);
+        requests.extend_from_slice(&deposit.signature);
+        requests.extend_from_slice(&deposit.index);
+    }
+    Ok(requests)
 }
 
 #[cfg(test)]

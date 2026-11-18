@@ -23,6 +23,7 @@ use alloy_rpc_types_engine::{
 use dashmap::DashSet;
 use derive_more::Deref;
 use ethgas_node_runner::types::EthProvider;
+use evm2::{block::BundleSource, ethereum::TxEnvelope};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -35,7 +36,9 @@ use reth_consensus::ConsensusError;
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_ethereum_primitives::{Block, EthPrimitives, Receipt, TransactionSigned};
 use reth_evm::{
-    ConfigureEvm, Evm,
+    BundleState, ConfigureEvm, Evm,
+    cached::CachedReads,
+    database::StateProviderDatabase,
     execute::{BlockExecutionOutput, Executor},
 };
 use reth_node_ethereum::EthereumEngineValidator;
@@ -46,7 +49,6 @@ use reth_provider::{
     AccountReader, BlockReaderIdExt, HashedPostStateProvider, HeaderProvider, StateProvider,
     StateProviderBox, StateProviderFactory,
 };
-use reth_revm::{Database, State, cached::CachedReads, database::StateProviderDatabase};
 use reth_rpc_eth_types::utils::recover_raw_transaction;
 use reth_rpc_server_types::result::internal_rpc_err;
 use reth_tasks::TaskExecutor;
@@ -288,8 +290,12 @@ impl ValidationApi {
     ) -> Result<ExecutedBlock, ValidationApiError> {
         let state_provider = self.provider.state_by_block_hash(block.parent_hash())?;
 
-        let cached_db = request_cache
-            .as_db_mut(StateProviderDatabase::new((&state_provider).into_evm_state_provider()));
+        // This execution's reads alone, over the reads cached for every request at this parent.
+        let mut execution_reads = CachedReads::default();
+        let cached_db = execution_reads
+            .as_db_mut(request_cache.as_db_mut(StateProviderDatabase::new(
+                (&state_provider).into_evm_state_provider(),
+            )));
         let mut executor = self.evm_config.batch_executor(cached_db);
 
         let mut accessed_blacklisted = None;
@@ -311,8 +317,8 @@ impl ValidationApi {
 
         if !self.disallow.is_empty() && apply_blacklist {
             // Check whether the submission interacted with any blacklisted account by scanning
-            // the `State`'s cache that records everything read from database during execution.
-            for account in state.cache.accounts.keys() {
+            // every account this execution read and every account it changed.
+            for account in execution_reads.accounts.keys().chain(state.state.keys()) {
                 if self.disallow.contains(account) {
                     accessed_blacklisted = Some(*account);
                 }
@@ -323,25 +329,22 @@ impl ValidationApi {
             return Err(ValidationApiError::Blacklist(account));
         }
 
-        let output = BlockExecutionOutput { state: state.bundle_state.clone(), result };
+        self.validate_inclusion_list_constraint(block, &state_provider, &state, inclusion_list)?;
 
-        self.validate_inclusion_list_constraint(block, state, inclusion_list)?;
+        let output = BlockExecutionOutput { state, result };
 
         Ok(ExecutedBlock { output, request_cache, state_provider, block_access_list_hash })
     }
 
     /// Fails when the block leaves out a transaction of the inclusion list that would still
     /// succeed on top of the block.
-    fn validate_inclusion_list_constraint<DB>(
+    fn validate_inclusion_list_constraint(
         &self,
         block: &RecoveredBlock<Block>,
-        post_state: State<DB>,
+        state_provider: &StateProviderBox,
+        post_state: &BundleState,
         inclusion_list: Option<&InclusionListWithMetadata>,
-    ) -> Result<(), ValidationApiError>
-    where
-        DB: Database + Debug,
-        <DB as Database>::Error: Send + Sync + 'static,
-    {
+    ) -> Result<(), ValidationApiError> {
         let Some(inclusion_list) = inclusion_list else {
             return Ok(());
         };
@@ -360,11 +363,16 @@ impl ValidationApi {
             return Ok(());
         }
 
-        // set up a fresh EVM on top of a cache wrapping the post-block state
+        // set up a fresh EVM on top of the post-block state: the block's changes seeded over the
+        // parent's state
         let mut evm = self
             .evm_config
-            .evm_for_block(post_state, block.header())
+            .evm_for_block(
+                StateProviderDatabase::new(state_provider.into_evm_state_provider()),
+                block.header(),
+            )
             .map_err(|_| ValidationApiError::InclusionList)?;
+        evm.overlay_db_mut().commit_source(&BundleSource(post_state));
 
         for req in &inclusion_list.txs {
             if included_hashes.contains(&req.hash) {
@@ -375,7 +383,7 @@ impl ValidationApi {
             let transaction: Recovered<TransactionSigned> = recover_raw_transaction(bytes_slice)
                 .map_err(|_| ValidationApiError::InclusionList)?;
 
-            let outcome = evm.transact(transaction);
+            let outcome = evm.transact_result(&transaction.convert::<TxEnvelope>());
 
             // if it succeeded, then this tx *could* have been included but wasn’t → reject
             if outcome.is_ok() {

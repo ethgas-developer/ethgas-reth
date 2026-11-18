@@ -14,7 +14,8 @@ use alloy_rpc_types::{Filter, Log, Transaction, TransactionReceipt};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::Header as RPCHeader;
 use arc_swap::Guard;
-use reth_revm::{db::BundleState, state::EvmState};
+use evm2::evm::PendingState;
+use reth_evm::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 
@@ -76,7 +77,7 @@ pub struct PendingBlocksBuilder {
     account_balances: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, TransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
-    transaction_state: HashMap<B256, EvmState>,
+    transaction_state: HashMap<B256, PendingState>,
     transaction_senders: HashMap<B256, Address>,
 
     bundle_state: Arc<BundleState>,
@@ -143,7 +144,7 @@ impl PendingBlocksBuilder {
 
     /// Stores the EVM state changes produced by a transaction.
     #[inline]
-    pub fn with_transaction_state(&mut self, hash: B256, state: EvmState) -> &Self {
+    pub fn with_transaction_state(&mut self, hash: B256, state: PendingState) -> &Self {
         self.transaction_state.insert(hash, state);
         self
     }
@@ -226,7 +227,7 @@ pub struct PendingBlocks {
     account_balances: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, TransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
-    transaction_state: HashMap<B256, EvmState>,
+    transaction_state: HashMap<B256, PendingState>,
     transaction_senders: HashMap<B256, Address>,
 
     bundle_state: Arc<BundleState>,
@@ -296,7 +297,7 @@ impl PendingBlocks {
     }
 
     /// Returns the EVM state for a transaction.
-    pub fn get_transaction_state(&self, hash: &B256) -> Option<EvmState> {
+    pub fn get_transaction_state(&self, hash: &B256) -> Option<PendingState> {
         self.transaction_state.get(hash).cloned()
     }
 

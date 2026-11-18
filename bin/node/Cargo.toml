@@ -30,7 +30,6 @@ default = ["jemalloc", "asm-keccak", "keccak-cache-global"]
 jemalloc = [
     "reth-cli-util/jemalloc",
     "reth-ethereum-cli/jemalloc",
-    "reth-provider/jemalloc",
 ]
 jemalloc-prof = [
     "jemalloc",

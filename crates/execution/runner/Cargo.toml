@@ -38,7 +38,6 @@ reth-rpc-eth-api.workspace = true
 reth-node-api.workspace = true
 reth-chainspec.workspace = true
 reth-provider.workspace = true
-reth-revm.workspace = true
 reth-node-ethereum.workspace = true
 reth-exex.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
@@ -81,6 +80,7 @@ tracing-subscriber = { workspace = true, optional = true }
 [dev-dependencies]
 ethgas-node-runner = { path = ".", features = ["test-utils"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
+evm2.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 [lints]

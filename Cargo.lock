@@ -3102,7 +3102,7 @@ dependencies = [
 
 [[package]]
 name = "ethgas-cli-utils"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "clap",
  "libc",
@@ -3116,7 +3116,7 @@ dependencies = [
 
 [[package]]
 name = "ethgas-flashblocks-node"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3168,7 +3168,7 @@ dependencies = [
 
 [[package]]
 name = "ethgas-node"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "ethgas-node-runner"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3236,7 +3236,7 @@ dependencies = [
 
 [[package]]
 name = "ethgas-reth-flashblocks"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3300,7 +3300,7 @@ dependencies = [
 
 [[package]]
 name = "ethgas-simulator"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3345,7 +3345,7 @@ dependencies = [
 
 [[package]]
 name = "ethgas-test-utils"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",

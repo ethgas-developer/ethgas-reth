@@ -61,7 +61,6 @@ reth-node-metrics.workspace = true
 reth-ipc.workspace = true
 jsonrpsee.workspace = true
 reth-db.workspace = true
-reth-revm.workspace = true
 reth-evm.workspace = true
 reth-ethereum-primitives.workspace = true
 reth-testing-utils.workspace = true
@@ -91,6 +90,7 @@ alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
+evm2.workspace = true
 
 [lints]
 workspace = true

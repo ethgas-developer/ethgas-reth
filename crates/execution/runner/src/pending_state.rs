@@ -8,8 +8,8 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_consensus::Header;
 use alloy_primitives::Sealed;
 use reth_ethereum_primitives::EthPrimitives;
+use reth_evm::BundleState;
 use reth_primitives_traits::{NodePrimitives, SealedHeader};
-use reth_revm::db::BundleState;
 
 /// Pending state as an overlay on canonical state.
 #[derive(Debug, Clone)]

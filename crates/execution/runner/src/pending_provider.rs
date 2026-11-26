@@ -5,13 +5,13 @@ use std::{fmt, sync::Arc};
 use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256,
 };
+use reth_evm::BundleState;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
     ProviderResult, StateProofProvider, StateProvider, StateProviderBox, StateRootProvider,
     StorageRootProvider,
 };
-use reth_revm::db::BundleState;
 use reth_trie_common::{
     AccountProof, DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState, HashedStorage,
     MultiProof, MultiProofTargets, MultiProofTargetsV2, StorageMultiProof, StorageProof, TrieInput,
@@ -228,14 +228,12 @@ mod tests {
     use alloy_primitives::address;
     use alloy_rpc_types_eth::TransactionRequest;
     use alloy_sol_types::{SolCall, SolConstructor};
+    use evm2::evm::AccountInfo;
     use reth_provider::{
         HeaderProvider, StateProviderFactory,
         test_utils::{ExtendedAccount, MockEthProvider},
     };
-    use reth_revm::{
-        db::{AccountStatus, BundleAccount, states::StorageSlot},
-        state::AccountInfo,
-    };
+    use reth_trie_common::bundle_state::{AccountStatus, BundleAccount, StorageSlot};
 
     use super::*;
     use crate::test_utils::{
@@ -285,7 +283,7 @@ mod tests {
     #[test]
     fn the_bundle_answers_first_and_the_anchor_answers_the_rest() -> ProviderResult<()> {
         let code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x01]));
-        let counter = AccountInfo::default().with_nonce(1).with_code_hash(keccak256(COUNTER_CODE));
+        let counter = AccountInfo::new(U256::ZERO, 1, keccak256(COUNTER_CODE), None);
         let newcomer = AccountInfo::default().with_code(code.0.clone());
         let mut bundle = BundleState::default();
         bundle.state.extend([
@@ -337,7 +335,7 @@ mod tests {
     /// A slot that the bundle set to zero reads zero, not the anchor's value.
     #[test]
     fn a_slot_the_bundle_set_to_zero_reads_zero() -> ProviderResult<()> {
-        let counter = AccountInfo::default().with_nonce(1).with_code_hash(keccak256(COUNTER_CODE));
+        let counter = AccountInfo::new(U256::ZERO, 1, keccak256(COUNTER_CODE), None);
         let mut bundle = BundleState::default();
         bundle.state.insert(COUNTER, account(Some(counter), [(0, 0)], AccountStatus::Changed));
         let pending = PendingStateProvider::new(anchor(), Arc::new(bundle));

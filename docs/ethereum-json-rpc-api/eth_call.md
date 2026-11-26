@@ -74,4 +74,4 @@ The environment and the state are read one after the other; see
 
 | Code | Message |
 |---|---|
-| `3` | `execution reverted`; the revert data, where one exists, is in the error `data` |
+| `3` | `execution reverted`; the revert data is in the error `data`, `0x` when the revert carried none |

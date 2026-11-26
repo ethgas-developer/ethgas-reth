@@ -149,7 +149,7 @@ impl LocalNode {
                 .ok_or_else(|| eyre::eyre!("invalid rpc module list: {modules}"))?;
             rpc_args = rpc_args.with_api(selection);
         }
-        rpc_args.auth_ipc_path = unique_ipc_path;
+        rpc_args.auth_ipc_path = Some(unique_ipc_path);
         if let Some(timeout) = options.send_raw_transaction_sync_timeout {
             rpc_args.rpc_send_raw_transaction_sync_timeout = timeout;
         }
@@ -209,9 +209,9 @@ impl LocalNode {
             .ws_local_addr()
             .ok_or_else(|| eyre::eyre!("Failed to get websocket api address"))?;
 
-        let engine_ipc_path = node_config.rpc.auth_ipc_path;
+        let engine_ipc_path = node_config.rpc.auth_ipc_path().to_owned();
         let ipc_path = node_handle.rpc_server_handle().ipc_endpoint();
-        let provider = node_handle.provider().clone();
+        let provider = node_handle.provider.clone();
         let network = Arc::new(node_handle.network.clone());
 
         Ok(Self {

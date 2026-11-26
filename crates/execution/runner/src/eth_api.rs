@@ -13,12 +13,12 @@ use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_ethereum_primitives::EthPrimitives;
 use reth_evm::{ConfigureEvm, EvmEnvFor};
 use reth_node_api::{FullNodeComponents, HeaderTy, NodeTypes, PrimitivesTy};
-use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
+use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx, EthRpcConverterFor, RpcNodeCoreFor};
 use reth_provider::{
     BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt, ProviderError, ProviderHeader,
     StateProviderBox, StateProviderFactory,
 };
-use reth_rpc::{EthApi, eth::core::EthRpcConverterFor};
+use reth_rpc::EthApi;
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, RpcConvert, RpcNodeCore, RpcNodeCoreExt,
     helpers::{
@@ -498,7 +498,7 @@ where
         >,
     EthApiError: FromEvmError<N::Evm>,
 {
-    type EthApi = EthgasEthApi<N, EthRpcConverterFor<N, Ethereum>>;
+    type EthApi = EthgasEthApi<RpcNodeCoreFor<N>, EthRpcConverterFor<N, Ethereum>>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
         let mut eth_api = ctx.eth_api_builder().map_converter(|r| r.with_network());

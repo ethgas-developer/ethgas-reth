@@ -878,7 +878,7 @@ where
                             producer_gas_used = tx_gas_used,
                             node_gas_used = executed.result.tx_gas_used(),
                             node_stop = ?executed.result.stop,
-                            node_output = %executed.result.output,
+                            node_output_len = executed.result.output.len(),
                         );
                         return Err(ExecutionError::StatusMismatch {
                             tx_hash: *transaction.tx_hash(),

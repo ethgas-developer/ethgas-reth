@@ -3180,7 +3180,6 @@ dependencies = [
  "humantime",
  "reth-cli-util",
  "reth-ethereum-cli",
- "reth-provider",
  "url",
 ]
 
